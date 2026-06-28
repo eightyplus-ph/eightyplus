@@ -7,9 +7,12 @@ const navLinks = [
   { label: 'Dashboard', href: '/' },
   { label: 'Inventory', href: '/inventory' },
   { label: 'Receiving', href: '/receiving' },
-  { label: 'Coffee Lots', href: '/lots' },
+  { label: 'Transfers', href: '/transfers' },
+  { label: 'Product Names', href: '/lots' },
+  { label: 'Locations', href: '/locations' },
   { label: 'Clients', href: '/clients' },
   { label: 'Orders', href: '/orders' },
+  { label: 'Dispatches', href: '/dispatches' },
 ]
 
 export default function Sidebar() {
