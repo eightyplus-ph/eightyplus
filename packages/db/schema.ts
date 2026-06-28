@@ -1,5 +1,4 @@
-import { pgTable, uuid, text, numeric, integer, timestamp, date, boolean, check } from 'drizzle-orm/pg-core'
-import { sql } from 'drizzle-orm'
+import { pgTable, uuid, text, numeric, integer, timestamp, date, boolean } from 'drizzle-orm/pg-core'
 
 export const lots = pgTable('lots', {
   id: uuid('id').primaryKey().defaultRandom(),
