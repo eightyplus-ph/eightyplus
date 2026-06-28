@@ -13,6 +13,7 @@ import OrdersPage from '@/pages/OrdersPage'
 import LocationsPage from '@/pages/LocationsPage'
 import TransfersPage from '@/pages/TransfersPage'
 import DispatchesPage from '@/pages/DispatchesPage'
+import ContractsPage from '@/pages/ContractsPage'
 
 const queryClient = new QueryClient()
 
@@ -26,6 +27,7 @@ function Router() {
   if (path === '/dispatches') return <DispatchesPage />
   if (path === '/locations') return <LocationsPage />
   if (path === '/transfers') return <TransfersPage />
+  if (path === '/contracts') return <ContractsPage />
   return <DashboardPage />
 }
 

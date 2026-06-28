@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, numeric, integer, timestamp, date, boolean } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, numeric, integer, timestamp, date, boolean, check } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 export const lots = pgTable('lots', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -137,4 +138,29 @@ export const dispatchItems = pgTable('dispatch_items', {
   dispatch_id: uuid('dispatch_id').references(() => dispatches.id).notNull(),
   order_item_id: uuid('order_item_id').references(() => orderItems.id).notNull(),
   weight_dispatched_kg: numeric('weight_dispatched_kg', { precision: 10, scale: 2 }).notNull(),
+})
+
+export const profiles = pgTable('profiles', {
+  id: uuid('id').primaryKey(),
+  full_name: text('full_name').notNull().default(''),
+  role: text('role').notNull().default('ops'),
+  can_create_dispatches: boolean('can_create_dispatches').notNull().default(false),
+  can_manage_contracts: boolean('can_manage_contracts').notNull().default(false),
+  created_at: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const contracts = pgTable('contracts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  contract_number: text('contract_number').notNull().unique(),
+  client_id: uuid('client_id').references(() => clients.id).notNull(),
+  lot_id: uuid('lot_id').references(() => lots.id).notNull(),
+  weight_contracted_kg: numeric('weight_contracted_kg', { precision: 10, scale: 2 }).notNull(),
+  price_per_kg: numeric('price_per_kg', { precision: 10, scale: 2 }).notNull(),
+  start_date: date('start_date').notNull(),
+  end_date: date('end_date'),
+  status: text('status').notNull().default('draft'),
+  assigned_to: uuid('assigned_to'),
+  created_by: uuid('created_by'),
+  notes: text('notes'),
+  created_at: timestamp('created_at').defaultNow().notNull(),
 })
