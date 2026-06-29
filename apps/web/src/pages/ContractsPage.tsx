@@ -382,10 +382,28 @@ export default function ContractsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('contracts')
-        .select('*, clients(company_name), assignee:profiles!contracts_assigned_to_fkey(full_name), contract_items(*)')
+        .select('*, clients(company_name), assignee:profiles!contracts_assigned_to_fkey(full_name)')
         .order('created_at', { ascending: false })
       if (error) throw error
-      return data as unknown as ContractRow[]
+
+      const rows = (data ?? []) as Omit<ContractRow, 'contract_items'>[]
+
+      // Fetch contract items separately so a schema-cache miss on contract_items
+      // doesn't wipe the entire contracts list
+      const ids = rows.map(r => r.id)
+      let itemsByContract: Record<string, ContractItem[]> = {}
+      if (ids.length > 0) {
+        const { data: items } = await supabase
+          .from('contract_items')
+          .select('*')
+          .in('contract_id', ids)
+        ;(items ?? []).forEach((ci: ContractItem) => {
+          if (!itemsByContract[ci.contract_id]) itemsByContract[ci.contract_id] = []
+          itemsByContract[ci.contract_id].push(ci)
+        })
+      }
+
+      return rows.map(r => ({ ...r, contract_items: itemsByContract[r.id] ?? [] })) as ContractRow[]
     },
   })
 
