@@ -106,7 +106,7 @@ function ContractForm({
     e.preventDefault()
     if (!form.contract_number.trim()) return setError('Contract number is required.')
     if (!form.client_id) return setError('Client is required.')
-    if (!form.lot_id) return setError('Lot is required.')
+
     if (!form.weight_contracted_kg || parseFloat(form.weight_contracted_kg) <= 0) return setError('Weight must be greater than 0.')
     if (!form.price_per_kg || parseFloat(form.price_per_kg) <= 0) return setError('Price per kg is required.')
     if (!form.start_date) return setError('Start date is required.')
@@ -144,9 +144,9 @@ function ContractForm({
           </select>
         </div>
         <div className="space-y-1">
-          <Label>Lot</Label>
+          <Label>Product <span className="text-gray-400 font-normal">(optional — assign when beans are available)</span></Label>
           <select value={form.lot_id} onChange={set('lot_id')} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white">
-            <option value="">Select lot…</option>
+            <option value="">Not yet assigned</option>
             {lots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </div>
@@ -320,7 +320,7 @@ export default function ContractsPage() {
     const { error } = await supabase.from('contracts').insert([{
       contract_number: form.contract_number.trim(),
       client_id: form.client_id,
-      lot_id: form.lot_id,
+      lot_id: form.lot_id || null,
       weight_contracted_kg: parseFloat(form.weight_contracted_kg),
       price_per_kg: parseFloat(form.price_per_kg),
       start_date: form.start_date,
@@ -339,7 +339,7 @@ export default function ContractsPage() {
     const { error } = await supabase.from('contracts').update({
       contract_number: form.contract_number.trim(),
       client_id: form.client_id,
-      lot_id: form.lot_id,
+      lot_id: form.lot_id || null,
       weight_contracted_kg: parseFloat(form.weight_contracted_kg),
       price_per_kg: parseFloat(form.price_per_kg),
       start_date: form.start_date,
