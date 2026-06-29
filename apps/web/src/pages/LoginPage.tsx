@@ -71,6 +71,15 @@ export default function LoginPage() {
         options: { emailRedirectTo: undefined },
       })
       if (signUpError) {
+        if (signUpError.message.toLowerCase().includes('already registered') || signUpError.message.toLowerCase().includes('already been registered')) {
+          // Account exists on a new device — switch to PIN entry
+          localStorage.setItem(`ep_setup_${selected!.id}`, '1')
+          setMode('enter-pin')
+          setPin('')
+          setFirstPin('')
+          setLoading(false)
+          return
+        }
         setError(signUpError.message)
         setLoading(false)
         return
