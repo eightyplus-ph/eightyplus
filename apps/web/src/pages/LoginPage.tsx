@@ -4,6 +4,7 @@ import { TEAM, type TeamMember } from '@/lib/team'
 import { cn } from '@/lib/utils'
 
 const PIN_LENGTH = 4
+const toPassword = (pin: string) => `${pin}__ep`  // pad to meet Supabase 6-char minimum
 
 type Mode = 'select' | 'set-pin' | 'confirm-pin' | 'enter-pin'
 
@@ -67,7 +68,7 @@ export default function LoginPage() {
       setLoading(true)
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: selected!.email,
-        password: next,
+        password: toPassword(next),
         options: { emailRedirectTo: undefined },
       })
       if (signUpError) {
@@ -106,7 +107,7 @@ export default function LoginPage() {
       setLoading(true)
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: selected!.email,
-        password: next,
+        password: toPassword(next),
       })
       if (!signInError) localStorage.setItem(`ep_setup_${selected!.id}`, '1')
       if (signInError) {
