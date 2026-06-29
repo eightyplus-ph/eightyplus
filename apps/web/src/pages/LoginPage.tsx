@@ -5,28 +5,50 @@ import { cn } from '@/lib/utils'
 
 const PIN_LENGTH = 4
 
+type Mode = 'select' | 'set-pin' | 'confirm-pin' | 'enter-pin'
+
 export default function LoginPage() {
   const [selected, setSelected] = useState<TeamMember | null>(null)
+  const [mode, setMode] = useState<Mode>('select')
   const [pin, setPin] = useState('')
+  const [firstPin, setFirstPin] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [shake, setShake] = useState(false)
 
-  const handleSelectUser = (member: TeamMember) => {
+  const triggerShake = () => {
+    setShake(true)
+    setTimeout(() => { setPin(''); setShake(false) }, 600)
+  }
+
+  const handleSelectUser = async (member: TeamMember) => {
     setSelected(member)
     setPin('')
     setError('')
+
+    // Check if this user already has a Supabase account
+    // by attempting a dummy sign-in — if error is "invalid credentials" they exist,
+    // if "user not found" or similar they need to set a PIN
+    const { error } = await supabase.auth.signInWithPassword({
+      email: member.email,
+      password: '________invalid________',
+    })
+
+    if (error?.message?.toLowerCase().includes('invalid login credentials')) {
+      // Account exists — ask for PIN
+      setMode('enter-pin')
+    } else {
+      // No account yet — first time setup
+      setMode('set-pin')
+    }
   }
 
   const handleBack = () => {
     setSelected(null)
+    setMode('select')
     setPin('')
+    setFirstPin('')
     setError('')
-  }
-
-  const triggerShake = () => {
-    setShake(true)
-    setTimeout(() => { setPin(''); setShake(false) }, 600)
   }
 
   const handleDigit = async (digit: string) => {
@@ -35,13 +57,56 @@ export default function LoginPage() {
     setPin(next)
     setError('')
 
-    if (next.length === PIN_LENGTH) {
+    if (next.length < PIN_LENGTH) return
+
+    if (mode === 'set-pin') {
+      setFirstPin(next)
+      setPin('')
+      setMode('confirm-pin')
+      return
+    }
+
+    if (mode === 'confirm-pin') {
+      if (next !== firstPin) {
+        setError('PINs don\'t match — try again')
+        triggerShake()
+        setFirstPin('')
+        setMode('set-pin')
+        return
+      }
+      // Create account + profile
       setLoading(true)
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: selected!.email,
+        password: next,
+        options: { emailRedirectTo: undefined },
+      })
+      if (signUpError) {
+        setError(signUpError.message)
+        setLoading(false)
+        return
+      }
+      const userId = data.user?.id
+      if (userId) {
+        await supabase.from('profiles').upsert({
+          id: userId,
+          full_name: selected!.name,
+          role: selected!.role,
+          can_create_dispatches: selected!.can_create_dispatches,
+          can_manage_contracts: selected!.can_manage_contracts,
+        })
+      }
+      window.location.href = '/'
+      return
+    }
+
+    if (mode === 'enter-pin') {
+      setLoading(true)
+      const { error: signInError } = await supabase.auth.signInWithPassword({
         email: selected!.email,
         password: next,
       })
-      if (error) {
+      if (signInError) {
         setError('Wrong PIN')
         triggerShake()
         setLoading(false)
@@ -57,6 +122,11 @@ export default function LoginPage() {
     setError('')
   }
 
+  const prompt =
+    mode === 'set-pin'     ? 'Set your PIN' :
+    mode === 'confirm-pin' ? 'Confirm PIN' :
+                             'Enter PIN'
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
       <div className="mb-8 text-center">
@@ -64,12 +134,13 @@ export default function LoginPage() {
         <p className="text-sm text-gray-400 mt-1">Operations</p>
       </div>
 
-      {!selected ? (
+      {mode === 'select' ? (
         <UserSelector onSelect={handleSelectUser} />
       ) : (
         <PinPad
-          member={selected}
+          member={selected!}
           pin={pin}
+          prompt={prompt}
           error={error}
           loading={loading}
           shake={shake}
@@ -110,6 +181,7 @@ function UserSelector({ onSelect }: { onSelect: (m: TeamMember) => void }) {
 interface PinPadProps {
   member: TeamMember
   pin: string
+  prompt: string
   error: string
   loading: boolean
   shake: boolean
@@ -118,7 +190,7 @@ interface PinPadProps {
   onBack: () => void
 }
 
-function PinPad({ member, pin, error, loading, shake, onDigit, onDelete, onBack }: PinPadProps) {
+function PinPad({ member, pin, prompt, error, loading, shake, onDigit, onDelete, onBack }: PinPadProps) {
   const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del']
 
   return (
@@ -133,7 +205,7 @@ function PinPad({ member, pin, error, loading, shake, onDigit, onDelete, onBack 
         <span className="text-sm text-gray-500 group-hover:text-gray-700">{member.name}</span>
       </button>
 
-      <p className="text-sm text-gray-500">Enter PIN</p>
+      <p className="text-sm text-gray-500">{prompt}</p>
 
       <div className={cn('flex gap-3', shake && 'animate-[shake_0.5s_ease-in-out]')}>
         {Array.from({ length: PIN_LENGTH }).map((_, i) => (
@@ -159,7 +231,7 @@ function PinPad({ member, pin, error, loading, shake, onDigit, onDelete, onBack 
             return (
               <button
                 key={i}
-                onClick={handleDelete}
+                onClick={onDelete}
                 disabled={loading || pin.length === 0}
                 className="h-14 rounded-xl bg-white border border-gray-200 text-gray-500 text-sm font-medium shadow-sm hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-30"
               >
@@ -184,6 +256,4 @@ function PinPad({ member, pin, error, loading, shake, onDigit, onDelete, onBack 
       <p className="text-xs text-gray-400">Tap your avatar to switch user</p>
     </div>
   )
-
-  function handleDelete() { onDelete() }
 }
