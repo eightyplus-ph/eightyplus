@@ -426,7 +426,10 @@ export default function ContractsPage() {
         weight_contracted_kg: 0,
         price_per_kg: 0,
       }]).select()
-      if (error) throw new Error(error.message)
+      if (error) {
+        if (error.code === '23505') throw new Error(`Contract number "${form.contract_number.trim()}" already exists. Use a different number.`)
+        throw new Error(error.message)
+      }
       contractId = data[0].id
     } else {
       const { error } = await supabase.from('contracts').update({
