@@ -418,7 +418,7 @@ export default function ContractsPage() {
   const { data: assignableUsers = [] } = useQuery<AssignableUser[]>({
     queryKey: ['assignable-users'],
     queryFn: async () => {
-      const { data } = await supabase.from('profiles').select('id, full_name').in('role', ['admin', 'sales']).order('full_name')
+      const { data } = await supabase.from('profiles').select('id, full_name').order('full_name')
       return (data ?? []) as AssignableUser[]
     },
   })
