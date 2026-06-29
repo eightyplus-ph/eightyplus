@@ -71,12 +71,15 @@ export default function LoginPage() {
         options: { emailRedirectTo: undefined },
       })
       if (signUpError) {
-        if (signUpError.message.toLowerCase().includes('already registered') || signUpError.message.toLowerCase().includes('already been registered')) {
-          // Account exists on a new device — switch to PIN entry
+        const msg = signUpError.message.toLowerCase()
+        const alreadyExists = msg.includes('already registered') || msg.includes('already been registered') || msg.includes('already exists')
+        if (alreadyExists) {
+          // Account exists (new device) — set flag and show clear message before switching
           localStorage.setItem(`ep_setup_${selected!.id}`, '1')
-          setMode('enter-pin')
           setPin('')
           setFirstPin('')
+          setError('Account already set up — enter your existing PIN.')
+          setMode('enter-pin')
           setLoading(false)
           return
         }
