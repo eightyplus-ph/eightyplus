@@ -21,26 +21,15 @@ export default function LoginPage() {
     setTimeout(() => { setPin(''); setShake(false) }, 600)
   }
 
-  const handleSelectUser = async (member: TeamMember) => {
+  const handleSelectUser = (member: TeamMember) => {
     setSelected(member)
     setPin('')
     setError('')
-
-    // Check if this user already has a Supabase account
-    // by attempting a dummy sign-in — if error is "invalid credentials" they exist,
-    // if "user not found" or similar they need to set a PIN
-    const { error } = await supabase.auth.signInWithPassword({
-      email: member.email,
-      password: '________invalid________',
-    })
-
-    if (error?.message?.toLowerCase().includes('invalid login credentials')) {
-      // Account exists — ask for PIN
-      setMode('enter-pin')
-    } else {
-      // No account yet — first time setup
-      setMode('set-pin')
-    }
+    // localStorage tracks who has completed first-time PIN setup.
+    // Supabase returns the same error for "wrong password" and "no account"
+    // so we can't detect first-time users via a probe sign-in.
+    const isSetup = localStorage.getItem(`ep_setup_${member.id}`) === '1'
+    setMode(isSetup ? 'enter-pin' : 'set-pin')
   }
 
   const handleBack = () => {
@@ -96,6 +85,7 @@ export default function LoginPage() {
           can_manage_contracts: selected!.can_manage_contracts,
         })
       }
+      localStorage.setItem(`ep_setup_${selected!.id}`, '1')
       window.location.href = '/'
       return
     }
@@ -106,6 +96,7 @@ export default function LoginPage() {
         email: selected!.email,
         password: next,
       })
+      if (!signInError) localStorage.setItem(`ep_setup_${selected!.id}`, '1')
       if (signInError) {
         setError('Wrong PIN')
         triggerShake()
