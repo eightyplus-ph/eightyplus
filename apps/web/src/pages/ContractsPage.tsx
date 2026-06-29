@@ -10,16 +10,22 @@ import { Card } from '@/components/ui/card'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Client { id: string; company_name: string }
-interface Lot { id: string; name: string }
 interface AssignableUser { id: string; full_name: string }
+
+interface ContractItem {
+  id: string
+  contract_id: string
+  product_name: string
+  price_per_kg: string
+  monthly_schedule: Record<string, number>
+  notes: string | null
+}
 
 interface ContractRow {
   id: string
   contract_number: string
+  title: string | null
   client_id: string
-  lot_id: string
-  weight_contracted_kg: string
-  price_per_kg: string
   start_date: string
   end_date: string | null
   status: string
@@ -28,38 +34,70 @@ interface ContractRow {
   notes: string | null
   created_at: string
   clients: { company_name: string } | null
-  lots: { name: string } | null
   assignee: { full_name: string } | null
+  contract_items: ContractItem[]
 }
 
-interface LinkedOrder {
-  id: string
-  os_number: string
-  status: string
-  order_items: { weight_ordered_kg: string }[]
-  dispatches: { dispatch_items: { weight_dispatched_kg: string }[] }[]
+interface ItemDraft {
+  tempId: string
+  product_name: string
+  price_per_kg: string
+  schedule: Record<string, string> // YYYY-MM -> kg string
 }
 
 interface FormState {
   contract_number: string
+  title: string
   client_id: string
-  lot_id: string
-  weight_contracted_kg: string
-  price_per_kg: string
-  start_date: string
-  end_date: string
+  start_month: string  // YYYY-MM
+  end_month: string    // YYYY-MM
   status: string
   assigned_to: string
   notes: string
+  items: ItemDraft[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function monthRange(start: string, end: string): string[] {
+  if (!start) return []
+  const e = end || start
+  const months: string[] = []
+  let [y, m] = start.split('-').map(Number)
+  const [ey, em] = e.split('-').map(Number)
+  while (y < ey || (y === ey && m <= em)) {
+    months.push(`${y}-${String(m).padStart(2, '0')}`)
+    m++; if (m > 12) { m = 1; y++ }
+  }
+  return months
+}
+
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(y, m - 1).toLocaleDateString('en', { month: 'short', year: '2-digit' })
+}
+
+function itemTotal(item: ItemDraft, months: string[]): number {
+  return months.reduce((s, m) => s + (parseFloat(item.schedule[m] || '0') || 0), 0)
+}
+
+function monthTotal(items: ItemDraft[], m: string): number {
+  return items.reduce((s, i) => s + (parseFloat(i.schedule[m] || '0') || 0), 0)
+}
+
+function grandTotal(items: ItemDraft[], months: string[]): number {
+  return months.reduce((s, m) => s + monthTotal(items, m), 0)
+}
+
+const today = new Date()
+const DEFAULT_START = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+const DEFAULT_END_DATE = new Date(today.getFullYear(), today.getMonth() + 5, 1)
+const DEFAULT_END = `${DEFAULT_END_DATE.getFullYear()}-${String(DEFAULT_END_DATE.getMonth() + 1).padStart(2, '0')}`
+
 const EMPTY_FORM: FormState = {
-  contract_number: '', client_id: '', lot_id: '',
-  weight_contracted_kg: '', price_per_kg: '',
-  start_date: new Date().toISOString().slice(0, 10),
-  end_date: '', status: 'draft', assigned_to: '', notes: '',
+  contract_number: '', title: '', client_id: '',
+  start_month: DEFAULT_START, end_month: DEFAULT_END,
+  status: 'draft', assigned_to: '', notes: '', items: [],
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -70,59 +108,56 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: 'bg-gray-100 text-gray-500',
 }
 
-function contractDispatchedKg(orders: LinkedOrder[]): number {
-  return orders.reduce((sum, o) =>
-    sum + o.dispatches.reduce((ds, d) =>
-      ds + d.dispatch_items.reduce((is, i) => is + parseFloat(i.weight_dispatched_kg || '0'), 0)
-    , 0)
-  , 0)
-}
-
-function orderedKg(orders: LinkedOrder[]): number {
-  return orders.reduce((sum, o) =>
-    sum + o.order_items.reduce((s, i) => s + parseFloat(i.weight_ordered_kg || '0'), 0)
-  , 0)
+function newItem(): ItemDraft {
+  return { tempId: crypto.randomUUID(), product_name: '', price_per_kg: '', schedule: {} }
 }
 
 // ─── Contract Form ─────────────────────────────────────────────────────────────
 
 function ContractForm({
-  initial, clients, lots, assignableUsers, onSave, onCancel,
+  initial, clients, assignableUsers, onSave, onCancel, showPrice,
 }: {
   initial: FormState
   clients: Client[]
-  lots: Lot[]
   assignableUsers: AssignableUser[]
   onSave: (f: FormState) => Promise<void>
   onCancel: () => void
+  showPrice: boolean
 }) {
-  const [form, setForm] = useState<FormState>(initial)
+  const [form, setForm] = useState<FormState>({ ...initial, items: initial.items.length ? initial.items : [newItem()] })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+
+  const set = (k: keyof Omit<FormState, 'items'>) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const months = monthRange(form.start_month, form.end_month)
+
+  const updateItem = (tempId: string, field: keyof Omit<ItemDraft, 'tempId' | 'schedule'>, value: string) =>
+    setForm(f => ({ ...f, items: f.items.map(i => i.tempId === tempId ? { ...i, [field]: value } : i) }))
+
+  const updateSchedule = (tempId: string, month: string, value: string) =>
+    setForm(f => ({ ...f, items: f.items.map(i => i.tempId === tempId ? { ...i, schedule: { ...i.schedule, [month]: value } } : i) }))
+
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, newItem()] }))
+  const removeItem = (tempId: string) => setForm(f => ({ ...f, items: f.items.filter(i => i.tempId !== tempId) }))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.contract_number.trim()) return setError('Contract number is required.')
     if (!form.client_id) return setError('Client is required.')
-
-    if (!form.weight_contracted_kg || parseFloat(form.weight_contracted_kg) <= 0) return setError('Weight must be greater than 0.')
-    if (!form.price_per_kg || parseFloat(form.price_per_kg) <= 0) return setError('Price per kg is required.')
-    if (!form.start_date) return setError('Start date is required.')
+    if (!form.start_month) return setError('Start month is required.')
+    if (form.items.length === 0 || !form.items.some(i => i.product_name.trim())) return setError('Add at least one product line.')
     setError('')
     setSaving(true)
-    try {
-      await onSave(form)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to save.')
-    } finally {
-      setSaving(false)
-    }
+    try { await onSave(form) }
+    catch (err: unknown) { setError(err instanceof Error ? err.message : 'Failed to save.') }
+    finally { setSaving(false) }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="p-6 space-y-4 bg-gray-50 border-b border-gray-200">
+    <form onSubmit={handleSubmit} className="p-6 space-y-6 bg-gray-50 border-b border-gray-200">
+      {/* Header fields */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1">
           <Label>Contract #</Label>
@@ -136,6 +171,10 @@ function ContractForm({
             ))}
           </select>
         </div>
+        <div className="col-span-2 space-y-1">
+          <Label>Title</Label>
+          <Input value={form.title} onChange={set('title')} placeholder="e.g. Brazil for Yardstick — New Contract Revision" />
+        </div>
         <div className="space-y-1">
           <Label>Client</Label>
           <select value={form.client_id} onChange={set('client_id')} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white">
@@ -144,41 +183,112 @@ function ContractForm({
           </select>
         </div>
         <div className="space-y-1">
-          <Label>Product <span className="text-gray-400 font-normal">(optional — assign when beans are available)</span></Label>
-          <select value={form.lot_id} onChange={set('lot_id')} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white">
-            <option value="">Not yet assigned</option>
-            {lots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-        </div>
-        <div className="space-y-1">
-          <Label>Weight Contracted (kg)</Label>
-          <Input type="number" step="0.01" value={form.weight_contracted_kg} onChange={set('weight_contracted_kg')} placeholder="0.00" />
-        </div>
-        <div className="space-y-1">
-          <Label>Price / kg (₱)</Label>
-          <Input type="number" step="0.01" value={form.price_per_kg} onChange={set('price_per_kg')} placeholder="0.00" />
-        </div>
-        <div className="space-y-1">
-          <Label>Start Date</Label>
-          <Input type="date" value={form.start_date} onChange={set('start_date')} />
-        </div>
-        <div className="space-y-1">
-          <Label>End Date (optional)</Label>
-          <Input type="date" value={form.end_date} onChange={set('end_date')} />
-        </div>
-        <div className="space-y-1 col-span-2">
           <Label>Assigned To</Label>
           <select value={form.assigned_to} onChange={set('assigned_to')} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white">
             <option value="">Unassigned</option>
             {assignableUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
           </select>
         </div>
-        <div className="space-y-1 col-span-2">
+        <div className="space-y-1">
+          <Label>Start Month</Label>
+          <Input type="month" value={form.start_month} onChange={set('start_month')} />
+        </div>
+        <div className="space-y-1">
+          <Label>End Month</Label>
+          <Input type="month" value={form.end_month} onChange={set('end_month')} />
+        </div>
+        <div className="col-span-2 space-y-1">
           <Label>Notes</Label>
           <textarea value={form.notes} onChange={set('notes')} rows={2}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm resize-none" />
         </div>
       </div>
+
+      {/* Product lines */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-gray-700">Product Lines</p>
+          <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={addItem}>+ Add Product</Button>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+          <table className="text-sm min-w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left px-3 py-2 font-medium text-gray-500 min-w-[200px]">Product</th>
+                {showPrice && <th className="text-right px-3 py-2 font-medium text-gray-500 min-w-[90px]">₱/kg</th>}
+                {months.map(m => (
+                  <th key={m} className="text-right px-3 py-2 font-medium text-gray-500 min-w-[80px]">{monthLabel(m)}</th>
+                ))}
+                <th className="text-right px-3 py-2 font-medium text-gray-500 min-w-[90px]">Total kg</th>
+                <th className="px-2 py-2 w-8" />
+              </tr>
+            </thead>
+            <tbody>
+              {form.items.map(item => {
+                const total = itemTotal(item, months)
+                return (
+                  <tr key={item.tempId} className="border-b border-gray-100">
+                    <td className="px-2 py-1.5">
+                      <Input
+                        value={item.product_name}
+                        onChange={e => updateItem(item.tempId, 'product_name', e.target.value)}
+                        placeholder="e.g. Fazenda IP (Yellow Bourbon)"
+                        className="h-8 text-xs"
+                      />
+                    </td>
+                    {showPrice && (
+                      <td className="px-2 py-1.5">
+                        <Input
+                          type="number" step="0.01" min="0"
+                          value={item.price_per_kg}
+                          onChange={e => updateItem(item.tempId, 'price_per_kg', e.target.value)}
+                          placeholder="0"
+                          className="h-8 text-xs text-right"
+                        />
+                      </td>
+                    )}
+                    {months.map(m => (
+                      <td key={m} className="px-2 py-1.5">
+                        <Input
+                          type="number" min="0" step="1"
+                          value={item.schedule[m] || ''}
+                          onChange={e => updateSchedule(item.tempId, m, e.target.value)}
+                          placeholder="—"
+                          className="h-8 text-xs text-right"
+                        />
+                      </td>
+                    ))}
+                    <td className="px-3 py-1.5 text-right font-medium text-gray-900">
+                      {total > 0 ? total.toLocaleString() : '—'}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <button type="button" onClick={() => removeItem(item.tempId)}
+                        className="text-gray-300 hover:text-red-400 text-sm leading-none">✕</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            {months.length > 0 && form.items.length > 1 && (
+              <tfoot>
+                <tr className="bg-gray-50 border-t border-gray-200">
+                  <td className="px-3 py-2 text-xs text-gray-400">Total</td>
+                  {showPrice && <td />}
+                  {months.map(m => {
+                    const t = monthTotal(form.items, m)
+                    return <td key={m} className="px-3 py-2 text-right text-xs font-medium text-gray-600">{t > 0 ? t.toLocaleString() : '—'}</td>
+                  })}
+                  <td className="px-3 py-2 text-right text-xs font-semibold text-gray-800">
+                    {grandTotal(form.items, months).toLocaleString()}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex gap-2">
         <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Contract'}</Button>
@@ -188,56 +298,72 @@ function ContractForm({
   )
 }
 
-// ─── Contract Detail ───────────────────────────────────────────────────────────
+// ─── Contract expanded detail ──────────────────────────────────────────────────
 
-function ContractDetail({ contract }: { contract: ContractRow }) {
-  const { data: orders = [], isLoading } = useQuery<LinkedOrder[]>({
-    queryKey: ['contract-orders', contract.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('id, os_number, status, order_items(weight_ordered_kg), dispatches(dispatch_items(weight_dispatched_kg))')
-        .eq('contract_id', contract.id)
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      return data as LinkedOrder[]
-    },
-  })
+function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPrice: boolean }) {
+  const items = contract.contract_items ?? []
+  if (items.length === 0) return (
+    <div className="px-6 py-4 text-sm text-gray-400 bg-gray-50 border-b border-gray-200">
+      No product lines yet.
+    </div>
+  )
 
-  if (isLoading) return <div className="px-6 py-4 text-sm text-gray-400">Loading orders…</div>
-  if (orders.length === 0) return <div className="px-6 py-4 text-sm text-gray-400">No orders linked to this contract yet.</div>
+  // Collect all months across items
+  const monthSet = new Set<string>()
+  items.forEach(i => Object.keys(i.monthly_schedule ?? {}).forEach(m => monthSet.add(m)))
+  const months = [...monthSet].sort()
 
   return (
     <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-      <p className="text-xs font-medium text-gray-500 mb-3 uppercase tracking-wide">Linked Orders</p>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-gray-400 text-xs">
-            <th className="pb-2 font-medium">OS #</th>
-            <th className="pb-2 font-medium">Status</th>
-            <th className="pb-2 font-medium text-right">Ordered</th>
-            <th className="pb-2 font-medium text-right">Dispatched</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map(o => {
-            const ordered = orderedKg([o])
-            const dispatched = contractDispatchedKg([o])
-            return (
-              <tr key={o.id} className="border-t border-gray-200">
-                <td className="py-2 font-mono text-xs text-gray-600">{o.os_number}</td>
-                <td className="py-2">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[o.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                    {o.status}
-                  </span>
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <table className="text-sm min-w-full">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="text-left px-3 py-2 font-medium text-gray-500">Product</th>
+              {showPrice && <th className="text-right px-3 py-2 font-medium text-gray-500">₱/kg</th>}
+              {months.map(m => (
+                <th key={m} className="text-right px-3 py-2 font-medium text-gray-500 text-xs">{monthLabel(m)}</th>
+              ))}
+              <th className="text-right px-3 py-2 font-medium text-gray-500">Total kg</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item => {
+              const total = months.reduce((s, m) => s + (item.monthly_schedule?.[m] ?? 0), 0)
+              const totalValue = total * parseFloat(item.price_per_kg)
+              return (
+                <tr key={item.id} className="border-b border-gray-100">
+                  <td className="px-3 py-2 font-medium text-gray-900">{item.product_name}</td>
+                  {showPrice && <td className="px-3 py-2 text-right text-gray-600">₱{parseFloat(item.price_per_kg).toLocaleString()}</td>}
+                  {months.map(m => {
+                    const kg = item.monthly_schedule?.[m] ?? 0
+                    return <td key={m} className="px-3 py-2 text-right text-gray-700">{kg > 0 ? kg.toLocaleString() : <span className="text-gray-300">—</span>}</td>
+                  })}
+                  <td className="px-3 py-2 text-right">
+                    <p className="font-semibold text-gray-900">{total.toLocaleString()} kg</p>
+                    {showPrice && <p className="text-xs text-gray-400">₱{Math.round(totalValue).toLocaleString()}</p>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+          {items.length > 1 && months.length > 0 && (
+            <tfoot>
+              <tr className="bg-gray-50 border-t border-gray-200">
+                <td className="px-3 py-2 text-xs text-gray-400 font-medium">Total</td>
+                {showPrice && <td />}
+                {months.map(m => {
+                  const t = items.reduce((s, i) => s + (i.monthly_schedule?.[m] ?? 0), 0)
+                  return <td key={m} className="px-3 py-2 text-right text-xs font-medium text-gray-700">{t > 0 ? t.toLocaleString() : <span className="text-gray-300">—</span>}</td>
+                })}
+                <td className="px-3 py-2 text-right text-xs font-semibold text-gray-800">
+                  {items.reduce((s, i) => s + months.reduce((ms, m) => ms + (i.monthly_schedule?.[m] ?? 0), 0), 0).toLocaleString()} kg
                 </td>
-                <td className="py-2 text-right text-gray-700">{Math.round(ordered)} kg</td>
-                <td className="py-2 text-right text-gray-700">{Math.round(dispatched)} kg</td>
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </div>
   )
 }
@@ -256,34 +382,10 @@ export default function ContractsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('contracts')
-        .select('*, clients(company_name), lots(name), assignee:profiles!contracts_assigned_to_fkey(full_name)')
+        .select('*, clients(company_name), assignee:profiles!contracts_assigned_to_fkey(full_name), contract_items(*)')
         .order('created_at', { ascending: false })
       if (error) throw error
-      return data as ContractRow[]
-    },
-  })
-
-  // Compute dispatched weight per contract
-  const contractIds = contracts.map(c => c.id)
-  const { data: dispatchedMap = {} } = useQuery<Record<string, number>>({
-    queryKey: ['contracts-dispatched', contractIds.join(',')],
-    enabled: contractIds.length > 0,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('contract_id, dispatches(dispatch_items(weight_dispatched_kg))')
-        .in('contract_id', contractIds)
-        .not('contract_id', 'is', null)
-      if (error) throw error
-      const map: Record<string, number> = {}
-      ;(data ?? []).forEach((o: { contract_id: string; dispatches: { dispatch_items: { weight_dispatched_kg: string }[] }[] }) => {
-        if (!o.contract_id) return
-        const kg = o.dispatches.reduce((ds: number, d: { dispatch_items: { weight_dispatched_kg: string }[] }) =>
-          ds + d.dispatch_items.reduce((is: number, i: { weight_dispatched_kg: string }) => is + parseFloat(i.weight_dispatched_kg || '0'), 0)
-        , 0)
-        map[o.contract_id] = (map[o.contract_id] ?? 0) + kg
-      })
-      return map
+      return data as unknown as ContractRow[]
     },
   })
 
@@ -295,80 +397,108 @@ export default function ContractsPage() {
     },
   })
 
-  const { data: lots = [] } = useQuery<Lot[]>({
-    queryKey: ['lots-select'],
-    queryFn: async () => {
-      const { data } = await supabase.from('lots').select('id, name').order('name')
-      return (data ?? []) as Lot[]
-    },
-  })
-
   const { data: assignableUsers = [] } = useQuery<AssignableUser[]>({
     queryKey: ['assignable-users'],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, full_name')
-        .in('role', ['admin', 'sales'])
-        .order('full_name')
+      const { data } = await supabase.from('profiles').select('id, full_name').in('role', ['admin', 'sales']).order('full_name')
       return (data ?? []) as AssignableUser[]
     },
   })
 
-  const handleCreate = async (form: FormState) => {
+  const saveContract = async (id: string | null, form: FormState) => {
     const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('contracts').insert([{
-      contract_number: form.contract_number.trim(),
-      client_id: form.client_id,
-      lot_id: form.lot_id || null,
-      weight_contracted_kg: parseFloat(form.weight_contracted_kg),
-      price_per_kg: parseFloat(form.price_per_kg),
-      start_date: form.start_date,
-      end_date: form.end_date || null,
-      status: form.status,
-      assigned_to: form.assigned_to || null,
-      created_by: user?.id ?? null,
-      notes: form.notes.trim() || null,
-    }])
-    if (error) throw new Error(error.message)
+    const startDate = form.start_month ? `${form.start_month}-01` : null
+    const endDate = form.end_month ? `${form.end_month}-01` : null
+
+    let contractId = id
+    if (!id) {
+      const { data, error } = await supabase.from('contracts').insert([{
+        contract_number: form.contract_number.trim(),
+        title: form.title.trim() || null,
+        client_id: form.client_id,
+        start_date: startDate,
+        end_date: endDate,
+        status: form.status,
+        assigned_to: form.assigned_to || null,
+        created_by: user?.id ?? null,
+        notes: form.notes.trim() || null,
+        lot_id: null,
+        weight_contracted_kg: 0,
+        price_per_kg: 0,
+      }]).select()
+      if (error) throw new Error(error.message)
+      contractId = data[0].id
+    } else {
+      const { error } = await supabase.from('contracts').update({
+        contract_number: form.contract_number.trim(),
+        title: form.title.trim() || null,
+        client_id: form.client_id,
+        start_date: startDate,
+        end_date: endDate,
+        status: form.status,
+        assigned_to: form.assigned_to || null,
+        notes: form.notes.trim() || null,
+      }).eq('id', id)
+      if (error) throw new Error(error.message)
+      // Delete old items and re-insert
+      await supabase.from('contract_items').delete().eq('contract_id', id)
+    }
+
+    // Insert contract items
+    const itemsToInsert = form.items
+      .filter(i => i.product_name.trim())
+      .map(i => {
+        const schedule: Record<string, number> = {}
+        for (const [month, kg] of Object.entries(i.schedule)) {
+          const v = parseFloat(kg)
+          if (v > 0) schedule[month] = v
+        }
+        return {
+          contract_id: contractId,
+          product_name: i.product_name.trim(),
+          price_per_kg: parseFloat(i.price_per_kg) || 0,
+          monthly_schedule: schedule,
+        }
+      })
+
+    if (itemsToInsert.length > 0) {
+      const { error } = await supabase.from('contract_items').insert(itemsToInsert)
+      if (error) throw new Error(error.message)
+    }
+
     await queryClient.invalidateQueries({ queryKey: ['contracts'] })
+    await queryClient.invalidateQueries({ queryKey: ['contract-items-active'] })
     setCreating(false)
+    setEditingId(null)
   }
 
-  const handleEdit = async (id: string, form: FormState) => {
-    const { error } = await supabase.from('contracts').update({
-      contract_number: form.contract_number.trim(),
-      client_id: form.client_id,
-      lot_id: form.lot_id || null,
-      weight_contracted_kg: parseFloat(form.weight_contracted_kg),
-      price_per_kg: parseFloat(form.price_per_kg),
-      start_date: form.start_date,
-      end_date: form.end_date || null,
-      status: form.status,
-      assigned_to: form.assigned_to || null,
-      notes: form.notes.trim() || null,
-    }).eq('id', id)
-    if (error) throw new Error(error.message)
-    await queryClient.invalidateQueries({ queryKey: ['contracts'] })
-    setEditingId(null)
+  const contractToForm = (c: ContractRow): FormState => {
+    const startMonth = c.start_date ? c.start_date.slice(0, 7) : DEFAULT_START
+    const endMonth = c.end_date ? c.end_date.slice(0, 7) : DEFAULT_END
+
+    const items: ItemDraft[] = (c.contract_items ?? []).map(ci => {
+      const schedule: Record<string, string> = {}
+      for (const [m, kg] of Object.entries(ci.monthly_schedule ?? {})) {
+        schedule[m] = String(kg)
+      }
+      return { tempId: crypto.randomUUID(), product_name: ci.product_name, price_per_kg: String(ci.price_per_kg), schedule }
+    })
+
+    return {
+      contract_number: c.contract_number,
+      title: c.title ?? '',
+      client_id: c.client_id,
+      start_month: startMonth,
+      end_month: endMonth,
+      status: c.status,
+      assigned_to: c.assigned_to ?? '',
+      notes: c.notes ?? '',
+      items: items.length ? items : [newItem()],
+    }
   }
 
   const canCreate = canCreateContracts(profile)
   const showPrice = canSeeFinancials(profile)
-
-  const toForm = (c: ContractRow): FormState => ({
-    contract_number: c.contract_number,
-    client_id: c.client_id,
-    lot_id: c.lot_id,
-    weight_contracted_kg: c.weight_contracted_kg,
-    price_per_kg: c.price_per_kg,
-    start_date: c.start_date,
-    end_date: c.end_date ?? '',
-    status: c.status,
-    assigned_to: c.assigned_to ?? '',
-    notes: c.notes ?? '',
-  })
-
   const canEdit = (c: ContractRow) =>
     canManageContracts(profile) ||
     (profile?.role === 'sales' && (c.assigned_to === profile.id || c.created_by === profile.id))
@@ -387,9 +517,9 @@ export default function ContractsPage() {
           <ContractForm
             initial={EMPTY_FORM}
             clients={clients}
-            lots={lots}
             assignableUsers={assignableUsers}
-            onSave={handleCreate}
+            showPrice={showPrice}
+            onSave={f => saveContract(null, f)}
             onCancel={() => setCreating(false)}
           />
         )}
@@ -399,79 +529,69 @@ export default function ContractsPage() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Contract #</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Client</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Lot</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Contracted</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500 w-40">Progress</th>
-                {showPrice && <th className="text-right px-4 py-3 font-medium text-gray-500">₱/kg</th>}
-                {showPrice && <th className="text-right px-4 py-3 font-medium text-gray-500">Total Value</th>}
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Title / Client</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Products</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">End Date</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Period</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Assigned</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={showPrice ? 11 : 9} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
               )}
               {!isLoading && contracts.length === 0 && (
                 <tr>
-                  <td colSpan={showPrice ? 11 : 9} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
                     No contracts yet. {canCreate && 'Click "+ New Contract" to create one.'}
                   </td>
                 </tr>
               )}
               {contracts.map(c => {
-                const contracted = parseFloat(c.weight_contracted_kg)
-                const dispatched = dispatchedMap[c.id] ?? 0
-                const pct = contracted > 0 ? Math.min(100, Math.round((dispatched / contracted) * 100)) : 0
-                const totalValue = contracted * parseFloat(c.price_per_kg)
                 const isExpanded = expandedId === c.id
                 const isEditing = editingId === c.id
+                const items = c.contract_items ?? []
+                const totalKg = items.reduce((s, i) =>
+                  s + Object.values(i.monthly_schedule ?? {}).reduce((ms, kg) => ms + kg, 0), 0)
+                const startMonth = c.start_date ? c.start_date.slice(0, 7) : null
+                const endMonth = c.end_date ? c.end_date.slice(0, 7) : null
 
                 return (
                   <Fragment key={c.id}>
                     <tr
-                      key={c.id}
                       className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
                       onClick={() => !isEditing && setExpandedId(isExpanded ? null : c.id)}
                     >
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 font-medium">{c.contract_number}</td>
-                      <td className="px-4 py-3 text-gray-900">{c.clients?.company_name ?? '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 text-xs">{c.lots?.name ?? '—'}</td>
-                      <td className="px-4 py-3 text-right text-gray-900">{Math.round(contracted)} kg</td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 bg-gray-100 rounded-full h-1.5">
-                            <div
-                              className="bg-blue-500 h-1.5 rounded-full transition-all"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                          <span className="text-xs text-gray-500 w-8 text-right">{pct}%</span>
-                        </div>
-                        <p className="text-xs text-gray-400 mt-0.5">{Math.round(dispatched)}/{Math.round(contracted)} kg</p>
+                        <p className="font-medium text-gray-900">{c.title ?? c.clients?.company_name ?? '—'}</p>
+                        {c.title && <p className="text-xs text-gray-400">{c.clients?.company_name}</p>}
                       </td>
-                      {showPrice && <td className="px-4 py-3 text-right text-gray-700">₱{parseFloat(c.price_per_kg).toLocaleString()}</td>}
-                      {showPrice && <td className="px-4 py-3 text-right text-gray-700">₱{Math.round(totalValue).toLocaleString()}</td>}
+                      <td className="px-4 py-3">
+                        {items.length === 0
+                          ? <span className="text-gray-300 text-xs">No products</span>
+                          : (
+                            <div>
+                              <p className="text-gray-700">{items.map(i => i.product_name).join(', ')}</p>
+                              {totalKg > 0 && <p className="text-xs text-gray-400">{totalKg.toLocaleString()} kg total</p>}
+                            </div>
+                          )}
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[c.status] ?? 'bg-gray-100 text-gray-500'}`}>
                           {c.status}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-gray-500 text-xs">
-                        {c.end_date ? new Date(c.end_date).toLocaleDateString() : '—'}
+                        {startMonth ? monthLabel(startMonth) : '—'}
+                        {endMonth ? ` → ${monthLabel(endMonth)}` : ''}
                       </td>
                       <td className="px-4 py-3 text-gray-600 text-xs">{c.assignee?.full_name ?? '—'}</td>
                       <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                         {canEdit(c) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs"
-                            onClick={() => { setEditingId(isEditing ? null : c.id); setCreating(false) }}
-                          >
+                          <Button variant="ghost" size="sm" className="text-xs"
+                            onClick={() => { setEditingId(isEditing ? null : c.id); setCreating(false) }}>
                             {isEditing ? 'Cancel' : 'Edit'}
                           </Button>
                         )}
@@ -479,13 +599,13 @@ export default function ContractsPage() {
                     </tr>
                     {isEditing && (
                       <tr key={`${c.id}-edit`}>
-                        <td colSpan={showPrice ? 11 : 9} className="p-0">
+                        <td colSpan={7} className="p-0">
                           <ContractForm
-                            initial={toForm(c)}
+                            initial={contractToForm(c)}
                             clients={clients}
-                            lots={lots}
                             assignableUsers={assignableUsers}
-                            onSave={form => handleEdit(c.id, form)}
+                            showPrice={showPrice}
+                            onSave={f => saveContract(c.id, f)}
                             onCancel={() => setEditingId(null)}
                           />
                         </td>
@@ -493,8 +613,8 @@ export default function ContractsPage() {
                     )}
                     {isExpanded && !isEditing && (
                       <tr key={`${c.id}-detail`}>
-                        <td colSpan={showPrice ? 11 : 9} className="p-0">
-                          <ContractDetail contract={c} />
+                        <td colSpan={7} className="p-0">
+                          <ContractDetail contract={c} showPrice={showPrice} />
                         </td>
                       </tr>
                     )}

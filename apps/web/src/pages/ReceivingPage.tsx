@@ -6,6 +6,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
+interface ActiveContractItem {
+  id: string
+  product_name: string
+  contracts: { contract_number: string; title: string | null; client_name: string } | null
+}
+
 function generateProductName(origin: string, region: string, producer: string, grade: string, otherInfo: string): string {
   return [origin, region, producer, grade, otherInfo].filter(s => s.trim().length > 0).join(' · ')
 }
@@ -43,7 +49,43 @@ export default function ReceivingPage() {
 
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [lastBatch, setLastBatch] = useState<{ number: string; name: string } | null>(null)
+  const [lastBatch, setLastBatch] = useState<{ id: string; number: string; name: string } | null>(null)
+  const [assigningContractItem, setAssigningContractItem] = useState('')
+  const [assignLoading, setAssignLoading] = useState(false)
+  const [assignDone, setAssignDone] = useState(false)
+
+  const { data: activeContractItems = [] } = useQuery<ActiveContractItem[]>({
+    queryKey: ['contract-items-active'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('contract_items')
+        .select('id, product_name, contracts!inner(contract_number, title, clients(company_name))')
+        .eq('contracts.status', 'active')
+        .order('product_name')
+      if (!data) return []
+      return data.map((d: unknown) => {
+        const row = d as { id: string; product_name: string; contracts: { contract_number: string; title: string | null; clients: { company_name: string } | null } | null }
+        return {
+          id: row.id,
+          product_name: row.product_name,
+          contracts: row.contracts ? {
+            contract_number: row.contracts.contract_number,
+            title: row.contracts.title,
+            client_name: row.contracts.clients?.company_name ?? '',
+          } : null,
+        }
+      })
+    },
+  })
+
+  const handleAssign = async () => {
+    if (!lastBatch || !assigningContractItem) return
+    setAssignLoading(true)
+    await supabase.from('batches').update({ contract_item_id: assigningContractItem }).eq('id', lastBatch.id)
+    await queryClient.invalidateQueries({ queryKey: ['batches'] })
+    setAssignDone(true)
+    setAssignLoading(false)
+  }
 
   const productName = generateProductName(origin, region, producer, grade, otherInfo)
 
@@ -115,7 +157,9 @@ export default function ReceivingPage() {
     await queryClient.invalidateQueries({ queryKey: ['lots-select'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
 
-    setLastBatch({ number: batchNumber, name: productName })
+    setLastBatch({ id: batchData[0].id, number: batchNumber, name: productName })
+    setAssigningContractItem('')
+    setAssignDone(false)
     setOrigin(''); setRegion(''); setProducer(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
     setWeightKg(''); setSacks(''); setPerSack(''); setLocationId('')
     setMoisture(''); setSourceRef(''); setNotes('')
@@ -146,13 +190,47 @@ export default function ReceivingPage() {
       <h1 className="text-2xl font-bold mb-6">Receive Stock</h1>
 
       {lastBatch && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-start justify-between">
-          <div>
-            <p className="font-medium text-green-800">Stock received successfully!</p>
-            <p className="text-sm text-green-700 mt-0.5">{lastBatch.name}</p>
-            <p className="text-xs text-green-600 mt-0.5">Batch #{lastBatch.number}</p>
+        <div className="mb-6 border border-green-200 rounded-lg overflow-hidden">
+          <div className="p-4 bg-green-50 flex items-start justify-between">
+            <div>
+              <p className="font-medium text-green-800">Stock received successfully!</p>
+              <p className="text-sm text-green-700 mt-0.5">{lastBatch.name}</p>
+              <p className="text-xs text-green-600 mt-0.5">Batch #{lastBatch.number}</p>
+            </div>
+            <button onClick={() => setLastBatch(null)} className="text-green-500 hover:text-green-700 text-sm ml-4">✕</button>
           </div>
-          <button onClick={() => setLastBatch(null)} className="text-green-500 hover:text-green-700 text-sm ml-4">✕</button>
+          {activeContractItems.length > 0 && !assignDone && (
+            <div className="p-4 bg-white border-t border-green-100">
+              <p className="text-sm font-medium text-gray-700 mb-2">Assign to contract? <span className="text-gray-400 font-normal">(optional)</span></p>
+              <div className="flex gap-2 items-center">
+                <select
+                  value={assigningContractItem}
+                  onChange={e => setAssigningContractItem(e.target.value)}
+                  className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+                >
+                  <option value="">Not a contract batch</option>
+                  {activeContractItems.map(ci => (
+                    <option key={ci.id} value={ci.id}>
+                      {ci.contracts ? `${ci.contracts.contract_number} · ${ci.contracts.client_name}` : ''} → {ci.product_name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  disabled={!assigningContractItem || assignLoading}
+                  onClick={handleAssign}
+                  className="shrink-0"
+                >
+                  {assignLoading ? 'Assigning…' : 'Assign'}
+                </Button>
+              </div>
+            </div>
+          )}
+          {assignDone && (
+            <div className="px-4 py-3 bg-blue-50 border-t border-blue-100">
+              <p className="text-sm text-blue-700 font-medium">Assigned to contract ✓</p>
+            </div>
+          )}
         </div>
       )}
 
