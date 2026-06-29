@@ -24,7 +24,7 @@ function StatCell({ kg, sacks }: { kg: number; sacks: number }) {
   )
 }
 
-function CountCell({ count, label }: { count: number; label: string }) {
+function CountCell({ count }: { count: number }) {
   return (
     <td className="px-4 py-3 text-center">
       {count > 0
@@ -68,7 +68,7 @@ export default function DashboardPage() {
       const map = new Map<string, ProductRow>()
       for (const b of batches ?? []) {
         const lotId = b.lot_id as string
-        const name = (b.lots as { name: string } | null)?.name ?? '—'
+        const name = (b.lots as unknown as { name: string } | null)?.name ?? '—'
         const kg = parseFloat(b.weight_kg ?? '0')
         const sacks = (b.sacks as number | null) ?? 0
         if (!map.has(lotId)) {
@@ -177,8 +177,8 @@ export default function DashboardPage() {
                   <StatCell kg={row.inStockKg} sacks={row.inStockSacks} />
                   <StatCell kg={row.reservedKg} sacks={row.reservedSacks} />
                   <StatCell kg={row.availableKg} sacks={row.availableSacks} />
-                  <CountCell count={row.openOrderCount} label="orders" />
-                  <CountCell count={row.dispatchCount} label="dispatch" />
+                  <CountCell count={row.openOrderCount} />
+                  <CountCell count={row.dispatchCount} />
                 </tr>
               ))}
             </tbody>

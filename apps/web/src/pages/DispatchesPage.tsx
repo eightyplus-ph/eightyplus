@@ -317,7 +317,7 @@ export default function DispatchesPage() {
         .eq('status', 'confirmed')
         .order('scheduled_dispatch_date', { ascending: true, nullsFirst: false })
       if (error) throw error
-      return (data as PendingOrder[]).filter(o => orderRemainingKg(o) > 0)
+      return (data as unknown as PendingOrder[]).filter(o => orderRemainingKg(o) > 0)
     },
   })
 

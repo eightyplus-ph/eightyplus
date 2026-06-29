@@ -48,7 +48,7 @@ function ClientOrders({ clientId }: { clientId: string }) {
         .eq('client_id', clientId)
         .order('created_at', { ascending: false })
       if (error) throw error
-      return data as ClientOrder[]
+      return data as unknown as ClientOrder[]
     },
   })
 

@@ -138,7 +138,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
         .gt('weight_kg', 0)
         .order('received_at', { ascending: false })
       if (error) throw error
-      return data as CountBatch[]
+      return data as unknown as CountBatch[]
     },
   })
 
@@ -287,7 +287,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         .select('id, batch_id, system_kg, counted_kg, batches(batch_number, lots(name), locations(name))')
         .eq('physical_count_id', count.id)
       if (error) throw error
-      return data as PhysicalCountItem[]
+      return data as unknown as PhysicalCountItem[]
     },
   })
 

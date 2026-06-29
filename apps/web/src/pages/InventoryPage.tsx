@@ -27,7 +27,7 @@ export default function InventoryPage() {
         .select('id, batch_number, weight_kg, location, received_at, lots(name), locations(name)')
         .order('received_at', { ascending: false })
       if (error) throw error
-      return data as Batch[]
+      return data as unknown as Batch[]
     },
   })
 
