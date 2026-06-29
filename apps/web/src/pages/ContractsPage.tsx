@@ -382,11 +382,11 @@ export default function ContractsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('contracts')
-        .select('*, clients(company_name), assignee:profiles!contracts_assigned_to_fkey(full_name)')
+        .select('*, clients(company_name)')
         .order('created_at', { ascending: false })
       if (error) throw error
 
-      const rows = (data ?? []) as Omit<ContractRow, 'contract_items'>[]
+      const rows = (data ?? []) as Omit<ContractRow, 'contract_items' | 'assignee'>[]
 
       // Fetch contract items separately so a schema-cache miss on contract_items
       // doesn't wipe the entire contracts list
@@ -403,7 +403,7 @@ export default function ContractsPage() {
         })
       }
 
-      return rows.map(r => ({ ...r, contract_items: itemsByContract[r.id] ?? [] })) as ContractRow[]
+      return rows.map(r => ({ ...r, assignee: null, contract_items: itemsByContract[r.id] ?? [] })) as ContractRow[]
     },
   })
 
@@ -608,7 +608,7 @@ export default function ContractsPage() {
                         {startMonth ? monthLabel(startMonth) : '—'}
                         {endMonth ? ` → ${monthLabel(endMonth)}` : ''}
                       </td>
-                      <td className="px-4 py-3 text-gray-600 text-xs">{c.assignee?.full_name ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{assignableUsers.find(u => u.id === c.assigned_to)?.full_name ?? '—'}</td>
                       <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                         {canEdit(c) && (
                           <Button variant="ghost" size="sm" className="text-xs"
