@@ -152,7 +152,7 @@ export default function DashboardPage() {
         row.locations = [...(locMap.get(lotId)?.values() ?? [])].sort((a, b) => a.locationName.localeCompare(b.locationName))
       }
 
-      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
+      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
     },
   })
 
@@ -216,12 +216,12 @@ export default function DashboardPage() {
                       onClick={() => hasMultipleLocations && toggleExpand(row.lotId)}
                       className={`border-b border-gray-100 ${hasMultipleLocations ? 'cursor-pointer hover:bg-gray-50' : ''} ${isExpanded ? 'bg-gray-50' : ''}`}
                     >
-                      <td className="px-4 py-3 font-medium text-gray-900">
+                      <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
                         <div className="flex items-center gap-2">
                           {hasMultipleLocations && (
-                            <span className="text-gray-400 text-xs select-none">{isExpanded ? '▾' : '▸'}</span>
+                            <span className="text-gray-400 text-xs select-none shrink-0">{isExpanded ? '▾' : '▸'}</span>
                           )}
-                          {row.name}
+                          <span className="truncate" title={row.name}>{row.name}</span>
                         </div>
                       </td>
                       <StatCell kg={row.inStockKg} sacks={row.inStockSacks} />
