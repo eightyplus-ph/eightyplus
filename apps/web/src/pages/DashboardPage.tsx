@@ -1,6 +1,14 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
+
+interface LocationBreakdown {
+  locationId: string
+  locationName: string
+  kg: number
+  sacks: number
+}
 
 interface ProductRow {
   lotId: string
@@ -13,12 +21,22 @@ interface ProductRow {
   availableSacks: number
   openOrderCount: number
   dispatchCount: number
+  locations: LocationBreakdown[]
 }
 
 function StatCell({ kg, sacks }: { kg: number; sacks: number }) {
   return (
     <td className="px-4 py-3 text-right">
       <p className="text-gray-900 font-medium">{Math.round(kg)}</p>
+      <p className="text-gray-400 text-xs">{sacks} sacks</p>
+    </td>
+  )
+}
+
+function StatCellSub({ kg, sacks }: { kg: number; sacks: number }) {
+  return (
+    <td className="px-4 py-2 text-right">
+      <p className="text-gray-600 text-xs">{Math.round(kg)} kg</p>
       <p className="text-gray-400 text-xs">{sacks} sacks</p>
     </td>
   )
@@ -35,16 +53,25 @@ function CountCell({ count }: { count: number }) {
 }
 
 export default function DashboardPage() {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  const toggleExpand = (lotId: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(lotId)) next.delete(lotId)
+      else next.add(lotId)
+      return next
+    })
+  }
+
   const { data: rows = [], isLoading } = useQuery<ProductRow[]>({
     queryKey: ['dashboard'],
     queryFn: async () => {
-      // Fetch batches (in-stock)
       const { data: batches, error: bErr } = await supabase
         .from('batches')
-        .select('lot_id, weight_kg, sacks, lots(name)')
+        .select('lot_id, weight_kg, sacks, lots(name), location_id, locations(name)')
       if (bErr) throw bErr
 
-      // Fetch active order items (reserved + confirmed)
       const { data: activeOrders, error: oErr } = await supabase
         .from('orders')
         .select('id, status')
@@ -64,33 +91,43 @@ export default function DashboardPage() {
         orderItems = (items ?? []) as typeof orderItems
       }
 
-      // Build per-lot map from batches
       const map = new Map<string, ProductRow>()
+      // per-lot per-location breakdown
+      const locMap = new Map<string, Map<string, LocationBreakdown>>()
+
       for (const b of batches ?? []) {
         const lotId = b.lot_id as string
         const name = (b.lots as unknown as { name: string } | null)?.name ?? '—'
         const kg = parseFloat(b.weight_kg ?? '0')
         const sacks = (b.sacks as number | null) ?? 0
+        const locationId = (b.location_id as string | null) ?? 'unknown'
+        const locationName = (b.locations as unknown as { name: string } | null)?.name ?? 'Unknown'
+
         if (!map.has(lotId)) {
-          map.set(lotId, { lotId, name, inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0 })
+          map.set(lotId, { lotId, name, inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, locations: [] })
+          locMap.set(lotId, new Map())
         }
         const row = map.get(lotId)!
         row.inStockKg += kg
         row.inStockSacks += sacks
+
+        const lm = locMap.get(lotId)!
+        if (!lm.has(locationId)) lm.set(locationId, { locationId, locationName, kg: 0, sacks: 0 })
+        const loc = lm.get(locationId)!
+        loc.kg += kg
+        loc.sacks += sacks
       }
 
-      // Track which orders touch each lot (for open/dispatch counts)
       const lotReservedOrders = new Map<string, Set<string>>()
       const lotConfirmedOrders = new Map<string, Set<string>>()
 
-      // Accumulate reserved kg per lot from order items
       for (const item of orderItems) {
         const lotId = item.lot_id as string
         const kg = parseFloat(item.weight_ordered_kg ?? '0')
         const orderId = item.order_id as string
 
         if (!map.has(lotId)) {
-          map.set(lotId, { lotId, name: '—', inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0 })
+          map.set(lotId, { lotId, name: '—', inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, locations: [] })
         }
         const row = map.get(lotId)!
 
@@ -105,7 +142,6 @@ export default function DashboardPage() {
         }
       }
 
-      // Compute derived fields
       for (const [lotId, row] of map) {
         const ratio = row.inStockKg > 0 ? row.reservedKg / row.inStockKg : 0
         row.reservedSacks = Math.round(row.inStockSacks * ratio)
@@ -113,6 +149,7 @@ export default function DashboardPage() {
         row.availableSacks = Math.max(0, row.inStockSacks - row.reservedSacks)
         row.openOrderCount = (lotReservedOrders.get(lotId)?.size ?? 0) + (lotConfirmedOrders.get(lotId)?.size ?? 0)
         row.dispatchCount = lotConfirmedOrders.get(lotId)?.size ?? 0
+        row.locations = [...(locMap.get(lotId)?.values() ?? [])].sort((a, b) => a.locationName.localeCompare(b.locationName))
       }
 
       return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
@@ -128,7 +165,6 @@ export default function DashboardPage() {
     <div>
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
 
-      {/* Summary strip */}
       <div className="grid grid-cols-3 gap-4 mb-8">
         <Card className="p-4">
           <p className="text-xs text-gray-500 mb-1">Total Stock</p>
@@ -147,7 +183,6 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Product overview table */}
       <Card>
         <div className="px-4 py-3 border-b border-gray-100">
           <p className="text-sm font-medium text-gray-700">Product Overview</p>
@@ -171,16 +206,40 @@ export default function DashboardPage() {
               {!isLoading && rows.length === 0 && (
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">No stock yet.</td></tr>
               )}
-              {rows.map(row => (
-                <tr key={row.lotId} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
-                  <StatCell kg={row.inStockKg} sacks={row.inStockSacks} />
-                  <StatCell kg={row.reservedKg} sacks={row.reservedSacks} />
-                  <StatCell kg={row.availableKg} sacks={row.availableSacks} />
-                  <CountCell count={row.openOrderCount} />
-                  <CountCell count={row.dispatchCount} />
-                </tr>
-              ))}
+              {rows.map(row => {
+                const isExpanded = expanded.has(row.lotId)
+                const hasMultipleLocations = row.locations.length > 1
+                return (
+                  <>
+                    <tr
+                      key={row.lotId}
+                      onClick={() => hasMultipleLocations && toggleExpand(row.lotId)}
+                      className={`border-b border-gray-100 ${hasMultipleLocations ? 'cursor-pointer hover:bg-gray-50' : ''} ${isExpanded ? 'bg-gray-50' : ''}`}
+                    >
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        <div className="flex items-center gap-2">
+                          {hasMultipleLocations && (
+                            <span className="text-gray-400 text-xs select-none">{isExpanded ? '▾' : '▸'}</span>
+                          )}
+                          {row.name}
+                        </div>
+                      </td>
+                      <StatCell kg={row.inStockKg} sacks={row.inStockSacks} />
+                      <StatCell kg={row.reservedKg} sacks={row.reservedSacks} />
+                      <StatCell kg={row.availableKg} sacks={row.availableSacks} />
+                      <CountCell count={row.openOrderCount} />
+                      <CountCell count={row.dispatchCount} />
+                    </tr>
+                    {isExpanded && row.locations.map(loc => (
+                      <tr key={`${row.lotId}-${loc.locationId}`} className="border-b border-gray-100 bg-gray-50/70">
+                        <td className="pl-10 pr-4 py-2 text-gray-500 text-xs">{loc.locationName}</td>
+                        <StatCellSub kg={loc.kg} sacks={loc.sacks} />
+                        <td colSpan={4} />
+                      </tr>
+                    ))}
+                  </>
+                )
+              })}
             </tbody>
           </table>
         </div>
