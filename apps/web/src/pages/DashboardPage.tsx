@@ -152,7 +152,8 @@ export default function DashboardPage() {
         row.locations = [...(locMap.get(lotId)?.values() ?? [])].sort((a, b) => a.locationName.localeCompare(b.locationName))
       }
 
-      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
+      const key = (name: string) => name.replace(/\s*·\s*/g, ' ').toLowerCase()
+      return [...map.values()].sort((a, b) => key(a.name) < key(b.name) ? -1 : key(a.name) > key(b.name) ? 1 : 0)
     },
   })
 
