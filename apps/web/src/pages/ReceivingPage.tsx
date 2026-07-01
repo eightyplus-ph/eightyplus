@@ -12,6 +12,12 @@ interface ActiveContractItem {
   contracts: { contract_number: string; title: string | null; client_name: string } | null
 }
 
+interface ExistingLot {
+  id: string
+  name: string
+  origin: string
+}
+
 function generateProductName(origin: string, region: string, producer: string, process: string, grade: string, otherInfo: string): string {
   return [origin, region, producer, process, grade, otherInfo].filter(s => s.trim().length > 0).join(' · ')
 }
@@ -30,7 +36,19 @@ export default function ReceivingPage() {
     },
   })
 
-  // Product identity
+  const { data: existingLots = [] } = useQuery<ExistingLot[]>({
+    queryKey: ['lots-select'],
+    queryFn: async () => {
+      const { data } = await supabase.from('lots').select('id, name, origin').order('name')
+      return (data ?? []) as ExistingLot[]
+    },
+  })
+
+  // Whether we're reusing an existing lot or creating a new one
+  const [lotMode, setLotMode] = useState<'existing' | 'new'>('existing')
+  const [selectedLotId, setSelectedLotId] = useState('')
+
+  // Product identity (for new lot)
   const [origin, setOrigin] = useState('')
   const [region, setRegion] = useState('')
   const [producer, setProducer] = useState('')
@@ -89,40 +107,48 @@ export default function ReceivingPage() {
     setAssignLoading(false)
   }
 
-  const productName = generateProductName(origin, region, producer, process, grade, otherInfo)
+  const productName = lotMode === 'new'
+    ? generateProductName(origin, region, producer, process, grade, otherInfo)
+    : (existingLots.find(l => l.id === selectedLotId)?.name ?? '')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    if (!origin.trim()) { setError('Origin is required.'); return }
+    if (lotMode === 'existing' && !selectedLotId) { setError('Select an existing product or switch to New Product.'); return }
+    if (lotMode === 'new' && !origin.trim()) { setError('Origin is required.'); return }
     if (!sacks || parseInt(sacks) <= 0) { setError('Number of sacks must be greater than 0.'); return }
     if (!perSack || parseFloat(perSack) <= 0) { setError('Per-sack weight must be greater than 0.'); return }
     if (!locationId) { setError('Location is required.'); return }
 
     setLoading(true)
 
-    const { data: lotData, error: lotError } = await supabase
-      .from('lots')
-      .insert([{
-        name: productName,
-        origin: origin.trim(),
-        region: region.trim() || null,
-        producer: producer.trim() || null,
-        process: process.trim() || null,
-        grade: grade.trim() || null,
-        other_info: otherInfo.trim() || null,
-        taste_notes: tasteNotes.trim() || null,
-      }])
-      .select()
+    let lotId: string
 
-    if (lotError) { setError(lotError.message); setLoading(false); return }
+    if (lotMode === 'existing') {
+      lotId = selectedLotId
+    } else {
+      const { data: lotData, error: lotError } = await supabase
+        .from('lots')
+        .insert([{
+          name: productName,
+          origin: origin.trim(),
+          region: region.trim() || null,
+          producer: producer.trim() || null,
+          process: process.trim() || null,
+          grade: grade.trim() || null,
+          other_info: otherInfo.trim() || null,
+          taste_notes: tasteNotes.trim() || null,
+        }])
+        .select()
+      if (lotError) { setError(lotError.message); setLoading(false); return }
+      lotId = lotData[0].id
+    }
 
-    const lotId = lotData[0].id
-    const now = new Date()
-    const mm = String(now.getMonth() + 1).padStart(2, '0')
-    const dd = String(now.getDate()).padStart(2, '0')
-    const yyyy = now.getFullYear()
+    const selectedDate = new Date(receivedDate)
+    const mm = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const dd = String(selectedDate.getDate()).padStart(2, '0')
+    const yyyy = selectedDate.getFullYear()
     const dateStr = `${mm}${dd}${yyyy}`
     const { count } = await supabase
       .from('batches')
@@ -163,10 +189,17 @@ export default function ReceivingPage() {
     setLastBatch({ id: batchData[0].id, number: batchNumber, name: productName })
     setAssigningContractItem('')
     setAssignDone(false)
-    setOrigin(''); setRegion(''); setProducer(''); setProcess(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
+
+    // Reset physical details only — preserve lot selection for quick repeat at different location
     setWeightKg(''); setSacks(''); setPerSack(''); setLocationId('')
     setReceivedDate(new Date().toISOString().slice(0, 10))
     setMoisture(''); setSourceRef(''); setNotes('')
+
+    // Reset new lot fields only if new lot was created
+    if (lotMode === 'new') {
+      setOrigin(''); setRegion(''); setProducer(''); setProcess(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
+    }
+
     setLoading(false)
   }
 
@@ -243,63 +276,101 @@ export default function ReceivingPage() {
         {/* Product Identity */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Product Identity</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Product Identity</CardTitle>
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setLotMode('existing')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lotMode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Existing product
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLotMode('new')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lotMode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  New product
+                </button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            {lotMode === 'existing' ? (
               <div className="space-y-1.5">
-                <Label>Origin *</Label>
-                <Input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="e.g. Ethiopia" />
+                <Label>Select product</Label>
+                <select
+                  value={selectedLotId}
+                  onChange={e => setSelectedLotId(e.target.value)}
+                  className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <option value="">Choose a product…</option>
+                  {existingLots.map(l => (
+                    <option key={l.id} value={l.id}>{l.name}</option>
+                  ))}
+                </select>
+                {selectedLotId && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    A new batch will be created under this product at the location you choose below.
+                  </p>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <Label>Region</Label>
-                <Input value={region} onChange={e => setRegion(e.target.value)} placeholder="e.g. Sidama" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>Producer / Farm</Label>
-                <Input value={producer} onChange={e => setProducer(e.target.value)} placeholder="e.g. Daye Bensa" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Process <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                <Input value={process} onChange={e => setProcess(e.target.value)} placeholder="e.g. Natural, Washed, Honey" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>Grade <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                <Input value={grade} onChange={e => setGrade(e.target.value)} placeholder="e.g. Grade 1" />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Other Info</Label>
-              <textarea
-                value={otherInfo}
-                onChange={e => setOtherInfo(e.target.value)}
-                rows={2}
-                placeholder="Varietal, process, certifications, or any other product details…"
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Taste Notes <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-              <textarea
-                value={tasteNotes}
-                onChange={e => setTasteNotes(e.target.value)}
-                rows={2}
-                placeholder="e.g. Blueberry, jasmine, dark chocolate…"
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
-              />
-            </div>
-
-            {productName && (
-              <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
-                <p className="text-xs text-blue-500 font-medium mb-0.5">Generated product name</p>
-                <p className="text-sm font-semibold text-blue-900">{productName}</p>
-              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Origin *</Label>
+                    <Input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="e.g. Ethiopia" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Region</Label>
+                    <Input value={region} onChange={e => setRegion(e.target.value)} placeholder="e.g. Sidama" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Producer / Farm</Label>
+                    <Input value={producer} onChange={e => setProducer(e.target.value)} placeholder="e.g. Daye Bensa" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Process <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                    <Input value={process} onChange={e => setProcess(e.target.value)} placeholder="e.g. Natural, Washed, Honey" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Grade <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                    <Input value={grade} onChange={e => setGrade(e.target.value)} placeholder="e.g. Grade 1" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Other Info</Label>
+                  <textarea
+                    value={otherInfo}
+                    onChange={e => setOtherInfo(e.target.value)}
+                    rows={2}
+                    placeholder="Varietal, certifications, or any other product details…"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Taste Notes <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                  <textarea
+                    value={tasteNotes}
+                    onChange={e => setTasteNotes(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Blueberry, jasmine, dark chocolate…"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
+                  />
+                </div>
+                {productName && (
+                  <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
+                    <p className="text-xs text-blue-500 font-medium mb-0.5">Generated product name</p>
+                    <p className="text-sm font-semibold text-blue-900">{productName}</p>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
