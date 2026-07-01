@@ -11,6 +11,7 @@ interface Client {
   id: string
   company_name: string
   brand_name: string | null
+  email: string | null
   tin: string | null
   contact_name: string | null
   contact_phone: string | null
@@ -114,6 +115,7 @@ const EWT_RATES = ['0', '1', '2', '5', '10', '15']
 interface ClientFormState {
   company_name: string
   brand_name: string
+  email: string
   tin: string
   contact_name: string
   contact_phone: string
@@ -127,6 +129,7 @@ interface ClientFormState {
 const emptyForm = (): ClientFormState => ({
   company_name: '',
   brand_name: '',
+  email: '',
   tin: '',
   contact_name: '',
   contact_phone: '',
@@ -165,15 +168,21 @@ function ClientFormFields({
           <Input value={form.tin} onChange={set('tin')} placeholder="000-000-000-000" />
         </div>
         <div className="space-y-1.5">
-          <Label>Contact Name <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-          <Input value={form.contact_name} onChange={set('contact_name')} placeholder="Juan Santos" />
+          <Label>Email <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+          <Input type="email" value={form.email} onChange={set('email')} placeholder="contact@company.com" />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
+          <Label>Contact Name <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+          <Input value={form.contact_name} onChange={set('contact_name')} placeholder="Juan Santos" />
+        </div>
+        <div className="space-y-1.5">
           <Label>Contact Phone <span className="text-gray-400 font-normal text-xs">optional</span></Label>
           <Input value={form.contact_phone} onChange={set('contact_phone')} placeholder="+63 9xx xxx xxxx" />
         </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <Label>Payment Terms</Label>
           <select
@@ -239,6 +248,7 @@ function AddClientDialog({ onClose }: { onClose: () => void }) {
     const { error } = await supabase.from('clients').insert([{
       company_name: form.company_name.trim(),
       brand_name: form.brand_name.trim() || null,
+      email: form.email.trim() || null,
       tin: form.tin.trim() || null,
       contact_name: form.contact_name.trim() || null,
       contact_phone: form.contact_phone.trim() || null,
@@ -275,6 +285,7 @@ function EditClientDialog({ client, onClose }: { client: Client; onClose: () => 
   const [form, setForm] = useState<ClientFormState>({
     company_name: client.company_name,
     brand_name: client.brand_name ?? '',
+    email: client.email ?? '',
     tin: client.tin ?? '',
     contact_name: client.contact_name ?? '',
     contact_phone: client.contact_phone ?? '',
@@ -297,6 +308,7 @@ function EditClientDialog({ client, onClose }: { client: Client; onClose: () => 
     const { error } = await supabase.from('clients').update({
       company_name: form.company_name.trim(),
       brand_name: form.brand_name.trim() || null,
+      email: form.email.trim() || null,
       tin: form.tin.trim() || null,
       contact_name: form.contact_name.trim() || null,
       contact_phone: form.contact_phone.trim() || null,
@@ -431,7 +443,10 @@ export default function ClientsPage() {
                         {client.brand_name && <p className="text-xs text-gray-400 mt-0.5">{client.brand_name}</p>}
                         {client.tin && <p className="text-xs text-gray-400 mt-0.5">TIN {client.tin}</p>}
                       </td>
-                      <td className="px-4 py-3 text-gray-600">{client.contact_name ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">
+                        <p>{client.contact_name ?? '—'}</p>
+                        {client.email && <p className="text-xs text-gray-400 mt-0.5">{client.email}</p>}
+                      </td>
                       <td className="px-4 py-3 text-gray-600">{client.contact_phone ?? '—'}</td>
                       <td className="px-4 py-3 text-gray-600">{client.payment_terms ?? '—'}</td>
                       <td className="px-4 py-3 text-right text-gray-600">{formatCreditLimit(client.credit_limit)}</td>

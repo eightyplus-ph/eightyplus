@@ -25,11 +25,13 @@ interface Batch {
 
 type Tab = 'stock' | 'physical-count'
 type StockFilter = 'all' | 'available' | 'contract'
+type LocationFilter = 'all' | 'bagtikan' | 'paco'
 
 export default function InventoryPage() {
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<Tab>('stock')
   const [filter, setFilter] = useState<StockFilter>('all')
+  const [locationFilter, setLocationFilter] = useState<LocationFilter>('all')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSacks, setEditSacks] = useState('')
   const [editWeight, setEditWeight] = useState('')
@@ -69,14 +71,20 @@ const saveEdit = async (id: string) => {
     setEditSaving(false)
   }
 
+  const locationName = (b: Batch) => (b.locations?.name ?? b.location ?? '').toLowerCase()
+
   const filtered = batches.filter(b => {
-    if (filter === 'available') return !b.contract_item_id
-    if (filter === 'contract') return !!b.contract_item_id
+    if (filter === 'available' && b.contract_item_id) return false
+    if (filter === 'contract' && !b.contract_item_id) return false
+    if (locationFilter === 'bagtikan' && !locationName(b).includes('bagtikan')) return false
+    if (locationFilter === 'paco' && !locationName(b).includes('paco')) return false
     return true
   })
 
   const contractCount = batches.filter(b => b.contract_item_id).length
   const availableCount = batches.filter(b => !b.contract_item_id).length
+  const bagtikanCount = batches.filter(b => locationName(b).includes('bagtikan')).length
+  const pacoCount = batches.filter(b => locationName(b).includes('paco')).length
 
   return (
     <div>
@@ -98,25 +106,42 @@ const saveEdit = async (id: string) => {
 
       {tab === 'stock' && (
         <Card>
-          {/* Filter row */}
-          <div className="px-4 py-3 border-b border-gray-100 flex gap-2">
-            {([
-              ['all', `All (${batches.length})`],
-              ['available', `Available (${availableCount})`],
-              ['contract', `Contract (${contractCount})`],
-            ] as [StockFilter, string][]).map(([f, label]) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  filter === f
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          {/* Filter rows */}
+          <div className="px-4 pt-3 pb-2 border-b border-gray-100 space-y-2">
+            <div className="flex gap-2">
+              {([
+                ['all', `All (${batches.length})`],
+                ['available', `Available (${availableCount})`],
+                ['contract', `Contract (${contractCount})`],
+              ] as [StockFilter, string][]).map(([f, label]) => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    filter === f ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              {([
+                ['all', 'All Locations'],
+                ['bagtikan', `Bagtikan (${bagtikanCount})`],
+                ['paco', `Paco Warehouse (${pacoCount})`],
+              ] as [LocationFilter, string][]).map(([f, label]) => (
+                <button
+                  key={f}
+                  onClick={() => setLocationFilter(f)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    locationFilter === f ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="overflow-x-auto">

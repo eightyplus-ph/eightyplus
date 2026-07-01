@@ -11,6 +11,7 @@ interface Lot {
   producer: string | null
   grade: string | null
   process: string | null
+  price_per_kg: number | null
   created_at: string
 }
 
@@ -86,17 +87,18 @@ export default function LotsPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Producer</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Process</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Grade</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Batches</th>
-              <th className="px-4 py-3"></th>
+                <th className="text-right px-4 py-3 font-medium text-gray-500">₱/kg</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Batches</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
               )}
               {!isLoading && lots.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
                     No products yet — receive stock to create your first lot.
                   </td>
                 </tr>
@@ -132,6 +134,9 @@ export default function LotsPage() {
                   <td className="px-4 py-3 text-gray-600">{lot.producer ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{lot.process ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{lot.grade ?? '—'}</td>
+                  <td className="px-4 py-3 text-right text-gray-700">
+                    {lot.price_per_kg ? `₱${Number(lot.price_per_kg).toLocaleString()}` : '—'}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">
                     {lot.batch_count === 0
                       ? <span className="text-amber-500">0 batches</span>
