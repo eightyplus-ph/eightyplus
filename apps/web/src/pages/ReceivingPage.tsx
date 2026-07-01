@@ -107,8 +107,9 @@ export default function ReceivingPage() {
   const [successCount, setSuccessCount] = useState<number | null>(null)
   const [lastProductName, setLastProductName] = useState('')
 
-  // Contract assignment (post-submit, for single-location submits)
-  const [lastBatchId, setLastBatchId] = useState<string | null>(null)
+  // Contract assignment (post-submit)
+  const [createdBatches, setCreatedBatches] = useState<{ id: string; locationName: string }[]>([])
+  const [assigningBatchId, setAssigningBatchId] = useState('')
   const [assigningContractItem, setAssigningContractItem] = useState('')
   const [assignLoading, setAssignLoading] = useState(false)
   const [assignDone, setAssignDone] = useState(false)
@@ -139,9 +140,10 @@ export default function ReceivingPage() {
   const removeRow = (id: string) => setLocationRows(r => r.filter(row => row.id !== id))
 
   const handleAssign = async () => {
-    if (!lastBatchId || !assigningContractItem) return
+    const batchId = createdBatches.length === 1 ? createdBatches[0].id : assigningBatchId
+    if (!batchId || !assigningContractItem) return
     setAssignLoading(true)
-    await supabase.from('batches').update({ contract_item_id: assigningContractItem }).eq('id', lastBatchId)
+    await supabase.from('batches').update({ contract_item_id: assigningContractItem }).eq('id', batchId)
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
     setAssignDone(true)
     setAssignLoading(false)
@@ -183,7 +185,7 @@ export default function ReceivingPage() {
       lotId = lotData[0].id
     }
 
-    let createdBatchIds: string[] = []
+    let createdBatchList: { id: string; locationName: string }[] = []
 
     for (const row of locationRows) {
       const d = new Date(row.receivedDate)
@@ -192,7 +194,7 @@ export default function ReceivingPage() {
       const yyyy = d.getFullYear()
       const dateStr = `${mm}${dd}${yyyy}`
       const { count } = await supabase.from('batches').select('id', { count: 'exact', head: true }).like('batch_number', `${dateStr}%`)
-      const seq = String((count ?? 0) + 1 + createdBatchIds.length).padStart(2, '0')
+      const seq = String((count ?? 0) + 1 + createdBatchList.length).padStart(2, '0')
       const batchNumber = `${dateStr}-${seq}`
 
       const { data: batchData, error: batchError } = await supabase
@@ -218,7 +220,8 @@ export default function ReceivingPage() {
         notes: `Received ${row.sacks} sacks`,
       }])
 
-      createdBatchIds.push(batchData[0].id)
+      const locName = locations.find(l => l.id === row.locationId)?.name ?? 'Unknown'
+      createdBatchList.push({ id: batchData[0].id, locationName: locName })
     }
 
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
@@ -228,7 +231,8 @@ export default function ReceivingPage() {
 
     setSuccessCount(locationRows.length)
     setLastProductName(productName)
-    setLastBatchId(createdBatchIds.length === 1 ? createdBatchIds[0] : null)
+    setCreatedBatches(createdBatchList)
+    setAssigningBatchId(createdBatchList.length === 1 ? createdBatchList[0].id : '')
     setAssigningContractItem('')
     setAssignDone(false)
 
@@ -254,10 +258,22 @@ export default function ReceivingPage() {
             </div>
             <button onClick={() => setSuccessCount(null)} className="text-green-500 hover:text-green-700 text-sm ml-4">✕</button>
           </div>
-          {activeContractItems.length > 0 && lastBatchId && !assignDone && (
-            <div className="p-4 bg-white border-t border-green-100">
-              <p className="text-sm font-medium text-gray-700 mb-2">Assign to contract? <span className="text-gray-400 font-normal">(optional)</span></p>
-              <div className="flex gap-2 items-center">
+          {activeContractItems.length > 0 && createdBatches.length > 0 && !assignDone && (
+            <div className="p-4 bg-white border-t border-green-100 space-y-2">
+              <p className="text-sm font-medium text-gray-700">Assign to contract? <span className="text-gray-400 font-normal">(optional)</span></p>
+              <div className="flex gap-2 items-center flex-wrap">
+                {createdBatches.length > 1 && (
+                  <select
+                    value={assigningBatchId}
+                    onChange={e => setAssigningBatchId(e.target.value)}
+                    className="border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="">Pick batch…</option>
+                    {createdBatches.map(b => (
+                      <option key={b.id} value={b.id}>{b.locationName}</option>
+                    ))}
+                  </select>
+                )}
                 <select
                   value={assigningContractItem}
                   onChange={e => setAssigningContractItem(e.target.value)}
@@ -270,7 +286,12 @@ export default function ReceivingPage() {
                     </option>
                   ))}
                 </select>
-                <Button type="button" disabled={!assigningContractItem || assignLoading} onClick={handleAssign} className="shrink-0">
+                <Button
+                  type="button"
+                  disabled={!assigningContractItem || assignLoading || (createdBatches.length > 1 && !assigningBatchId)}
+                  onClick={handleAssign}
+                  className="shrink-0"
+                >
                   {assignLoading ? 'Assigning…' : 'Assign'}
                 </Button>
               </div>
