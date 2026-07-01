@@ -188,10 +188,7 @@ export default function ReceivingPage() {
     let createdBatchList: { id: string; locationName: string }[] = []
 
     for (const row of locationRows) {
-      const d = new Date(row.receivedDate)
-      const mm = String(d.getMonth() + 1).padStart(2, '0')
-      const dd = String(d.getDate()).padStart(2, '0')
-      const yyyy = d.getFullYear()
+      const [yyyy, mm, dd] = row.receivedDate.split('-')
       const dateStr = `${mm}${dd}${yyyy}`
       const { count } = await supabase.from('batches').select('id', { count: 'exact', head: true }).like('batch_number', `${dateStr}%`)
       const seq = String((count ?? 0) + 1 + createdBatchList.length).padStart(2, '0')
