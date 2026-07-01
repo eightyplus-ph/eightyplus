@@ -14,18 +14,29 @@ interface Lot {
   created_at: string
 }
 
+interface LotWithBatchCount extends Lot {
+  batch_count: number
+}
+
 export default function LotsPage() {
   const queryClient = useQueryClient()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  const { data: lots = [], isLoading } = useQuery<Lot[]>({
+  const { data: lots = [], isLoading } = useQuery<LotWithBatchCount[]>({
     queryKey: ['lots'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('lots').select('*').order('name')
+      const { data: lotData, error } = await supabase.from('lots').select('*').order('name')
       if (error) throw error
-      return data
+      const { data: batchCounts } = await supabase.from('batches').select('lot_id')
+      const countMap = new Map<string, number>()
+      for (const b of batchCounts ?? []) {
+        const lid = b.lot_id as string
+        countMap.set(lid, (countMap.get(lid) ?? 0) + 1)
+      }
+      return (lotData ?? []).map(l => ({ ...l, batch_count: countMap.get(l.id) ?? 0 }))
     },
   })
 
@@ -48,6 +59,14 @@ export default function LotsPage() {
 
   const cancelEdit = () => setEditingId(null)
 
+  const deleteLot = async (id: string) => {
+    setDeletingId(id)
+    await supabase.from('lots').delete().eq('id', id)
+    await queryClient.invalidateQueries({ queryKey: ['lots'] })
+    await queryClient.invalidateQueries({ queryKey: ['lots-select'] })
+    setDeletingId(null)
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -67,15 +86,17 @@ export default function LotsPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Producer</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Process</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Grade</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-500">Batches</th>
+              <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
               )}
               {!isLoading && lots.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
                     No products yet — receive stock to create your first lot.
                   </td>
                 </tr>
@@ -111,6 +132,22 @@ export default function LotsPage() {
                   <td className="px-4 py-3 text-gray-600">{lot.producer ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{lot.process ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{lot.grade ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">
+                    {lot.batch_count === 0
+                      ? <span className="text-amber-500">0 batches</span>
+                      : `${lot.batch_count} batch${lot.batch_count === 1 ? '' : 'es'}`}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {lot.batch_count === 0 && (
+                      <button
+                        onClick={() => deleteLot(lot.id)}
+                        disabled={deletingId === lot.id}
+                        className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+                      >
+                        {deletingId === lot.id ? '…' : 'Delete'}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
