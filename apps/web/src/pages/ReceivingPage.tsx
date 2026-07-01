@@ -45,6 +45,7 @@ export default function ReceivingPage() {
   const [perSack, setPerSack] = useState('')
   const [locationId, setLocationId] = useState('')
   const [moisture, setMoisture] = useState('')
+  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10))
   const [sourceRef, setSourceRef] = useState('')
   const [notes, setNotes] = useState('')
 
@@ -138,6 +139,7 @@ export default function ReceivingPage() {
         weight_kg: parseFloat(weightKg),
         sacks: parseInt(sacks),
         location_id: locationId,
+        received_at: receivedDate,
         moisture_arrival: moisture ? parseFloat(moisture) : null,
         source_reference: sourceRef.trim() || null,
         notes: notes.trim() || null,
@@ -163,6 +165,7 @@ export default function ReceivingPage() {
     setAssignDone(false)
     setOrigin(''); setRegion(''); setProducer(''); setProcess(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
     setWeightKg(''); setSacks(''); setPerSack(''); setLocationId('')
+    setReceivedDate(new Date().toISOString().slice(0, 10))
     setMoisture(''); setSourceRef(''); setNotes('')
     setLoading(false)
   }
@@ -338,9 +341,15 @@ export default function ReceivingPage() {
                 <Input type="number" step="0.01" min="0" max="100" value={moisture} onChange={e => setMoisture(e.target.value)} placeholder="11.50" />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Source Reference <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-              <Input value={sourceRef} onChange={e => setSourceRef(e.target.value)} placeholder="PO or OS number" />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Received Date</Label>
+                <Input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Source Reference <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                <Input value={sourceRef} onChange={e => setSourceRef(e.target.value)} placeholder="PO or OS number" />
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label>Notes <span className="text-gray-400 font-normal text-xs">optional</span></Label>
