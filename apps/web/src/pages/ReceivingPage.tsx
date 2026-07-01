@@ -12,8 +12,8 @@ interface ActiveContractItem {
   contracts: { contract_number: string; title: string | null; client_name: string } | null
 }
 
-function generateProductName(origin: string, region: string, producer: string, grade: string, otherInfo: string): string {
-  return [origin, region, producer, grade, otherInfo].filter(s => s.trim().length > 0).join(' · ')
+function generateProductName(origin: string, region: string, producer: string, process: string, grade: string, otherInfo: string): string {
+  return [origin, region, producer, process, grade, otherInfo].filter(s => s.trim().length > 0).join(' · ')
 }
 
 interface Location { id: string; name: string }
@@ -34,6 +34,7 @@ export default function ReceivingPage() {
   const [origin, setOrigin] = useState('')
   const [region, setRegion] = useState('')
   const [producer, setProducer] = useState('')
+  const [process, setProcess] = useState('')
   const [grade, setGrade] = useState('')
   const [otherInfo, setOtherInfo] = useState('')
   const [tasteNotes, setTasteNotes] = useState('')
@@ -87,14 +88,13 @@ export default function ReceivingPage() {
     setAssignLoading(false)
   }
 
-  const productName = generateProductName(origin, region, producer, grade, otherInfo)
+  const productName = generateProductName(origin, region, producer, process, grade, otherInfo)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
     if (!origin.trim()) { setError('Origin is required.'); return }
-    if (!grade.trim()) { setError('Grade is required.'); return }
     if (!sacks || parseInt(sacks) <= 0) { setError('Number of sacks must be greater than 0.'); return }
     if (!perSack || parseFloat(perSack) <= 0) { setError('Per-sack weight must be greater than 0.'); return }
     if (!locationId) { setError('Location is required.'); return }
@@ -108,7 +108,8 @@ export default function ReceivingPage() {
         origin: origin.trim(),
         region: region.trim() || null,
         producer: producer.trim() || null,
-        grade: grade.trim(),
+        process: process.trim() || null,
+        grade: grade.trim() || null,
         other_info: otherInfo.trim() || null,
         taste_notes: tasteNotes.trim() || null,
       }])
@@ -160,7 +161,7 @@ export default function ReceivingPage() {
     setLastBatch({ id: batchData[0].id, number: batchNumber, name: productName })
     setAssigningContractItem('')
     setAssignDone(false)
-    setOrigin(''); setRegion(''); setProducer(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
+    setOrigin(''); setRegion(''); setProducer(''); setProcess(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
     setWeightKg(''); setSacks(''); setPerSack(''); setLocationId('')
     setMoisture(''); setSourceRef(''); setNotes('')
     setLoading(false)
@@ -258,7 +259,13 @@ export default function ReceivingPage() {
                 <Input value={producer} onChange={e => setProducer(e.target.value)} placeholder="e.g. Daye Bensa" />
               </div>
               <div className="space-y-1.5">
-                <Label>Grade *</Label>
+                <Label>Process <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                <Input value={process} onChange={e => setProcess(e.target.value)} placeholder="e.g. Natural, Washed, Honey" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Grade <span className="text-gray-400 font-normal text-xs">optional</span></Label>
                 <Input value={grade} onChange={e => setGrade(e.target.value)} placeholder="e.g. Grade 1" />
               </div>
             </div>
