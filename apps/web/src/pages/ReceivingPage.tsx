@@ -12,17 +12,36 @@ interface ActiveContractItem {
   contracts: { contract_number: string; title: string | null; client_name: string } | null
 }
 
-interface ExistingLot {
+interface ExistingLot { id: string; name: string; origin: string }
+interface Location { id: string; name: string }
+
+interface LocationRow {
   id: string
-  name: string
-  origin: string
+  locationId: string
+  sacks: string
+  perSack: string
+  weightKg: string
+  receivedDate: string
+  sourceRef: string
+  notes: string
+}
+
+function newLocationRow(): LocationRow {
+  return {
+    id: crypto.randomUUID(),
+    locationId: '',
+    sacks: '',
+    perSack: '',
+    weightKg: '',
+    receivedDate: new Date().toISOString().slice(0, 10),
+    sourceRef: '',
+    notes: '',
+  }
 }
 
 function generateProductName(origin: string, region: string, producer: string, process: string, grade: string, otherInfo: string): string {
   return [origin, region, producer, process, grade, otherInfo].filter(s => s.trim().length > 0).join(' · ')
 }
-
-interface Location { id: string; name: string }
 
 export default function ReceivingPage() {
   const queryClient = useQueryClient()
@@ -43,36 +62,6 @@ export default function ReceivingPage() {
       return (data ?? []) as ExistingLot[]
     },
   })
-
-  // Whether we're reusing an existing lot or creating a new one
-  const [lotMode, setLotMode] = useState<'existing' | 'new'>('existing')
-  const [selectedLotId, setSelectedLotId] = useState('')
-
-  // Product identity (for new lot)
-  const [origin, setOrigin] = useState('')
-  const [region, setRegion] = useState('')
-  const [producer, setProducer] = useState('')
-  const [process, setProcess] = useState('')
-  const [grade, setGrade] = useState('')
-  const [otherInfo, setOtherInfo] = useState('')
-  const [tasteNotes, setTasteNotes] = useState('')
-
-  // Physical details
-  const [weightKg, setWeightKg] = useState('')
-  const [sacks, setSacks] = useState('')
-  const [perSack, setPerSack] = useState('')
-  const [locationId, setLocationId] = useState('')
-  const [moisture, setMoisture] = useState('')
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10))
-  const [sourceRef, setSourceRef] = useState('')
-  const [notes, setNotes] = useState('')
-
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [lastBatch, setLastBatch] = useState<{ id: string; number: string; name: string } | null>(null)
-  const [assigningContractItem, setAssigningContractItem] = useState('')
-  const [assignLoading, setAssignLoading] = useState(false)
-  const [assignDone, setAssignDone] = useState(false)
 
   const { data: activeContractItems = [] } = useQuery<ActiveContractItem[]>({
     queryKey: ['contract-items-active'],
@@ -98,18 +87,65 @@ export default function ReceivingPage() {
     },
   })
 
-  const handleAssign = async () => {
-    if (!lastBatch || !assigningContractItem) return
-    setAssignLoading(true)
-    await supabase.from('batches').update({ contract_item_id: assigningContractItem }).eq('id', lastBatch.id)
-    await queryClient.invalidateQueries({ queryKey: ['batches'] })
-    setAssignDone(true)
-    setAssignLoading(false)
-  }
+  const [lotMode, setLotMode] = useState<'existing' | 'new'>('existing')
+  const [selectedLotId, setSelectedLotId] = useState('')
+
+  // New lot fields
+  const [origin, setOrigin] = useState('')
+  const [region, setRegion] = useState('')
+  const [producer, setProducer] = useState('')
+  const [process, setProcess] = useState('')
+  const [grade, setGrade] = useState('')
+  const [otherInfo, setOtherInfo] = useState('')
+  const [tasteNotes, setTasteNotes] = useState('')
+
+  // Multi-location rows
+  const [locationRows, setLocationRows] = useState<LocationRow[]>([newLocationRow()])
+
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [successCount, setSuccessCount] = useState<number | null>(null)
+  const [lastProductName, setLastProductName] = useState('')
+
+  // Contract assignment (post-submit, for single-location submits)
+  const [lastBatchId, setLastBatchId] = useState<string | null>(null)
+  const [assigningContractItem, setAssigningContractItem] = useState('')
+  const [assignLoading, setAssignLoading] = useState(false)
+  const [assignDone, setAssignDone] = useState(false)
 
   const productName = lotMode === 'new'
     ? generateProductName(origin, region, producer, process, grade, otherInfo)
     : (existingLots.find(l => l.id === selectedLotId)?.name ?? '')
+
+  const updateRow = (id: string, field: keyof LocationRow, value: string) => {
+    setLocationRows(rows => rows.map(r => {
+      if (r.id !== id) return r
+      const updated = { ...r, [field]: value }
+      if (field === 'sacks' || field === 'perSack') {
+        const s = parseInt(field === 'sacks' ? value : updated.sacks)
+        const p = parseFloat(field === 'perSack' ? value : updated.perSack)
+        if (s > 0 && p > 0) updated.weightKg = (s * p).toFixed(2)
+      }
+      if (field === 'weightKg') {
+        const s = parseInt(updated.sacks)
+        const w = parseFloat(value)
+        if (s > 0 && w > 0) updated.perSack = (w / s).toFixed(2)
+      }
+      return updated
+    }))
+  }
+
+  const addRow = () => setLocationRows(r => [...r, newLocationRow()])
+  const removeRow = (id: string) => setLocationRows(r => r.filter(row => row.id !== id))
+
+  const handleAssign = async () => {
+    if (!lastBatchId || !assigningContractItem) return
+    setAssignLoading(true)
+    await supabase.from('batches').update({ contract_item_id: assigningContractItem }).eq('id', lastBatchId)
+    await queryClient.invalidateQueries({ queryKey: ['batches'] })
+    setAssignDone(true)
+    setAssignLoading(false)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -117,14 +153,16 @@ export default function ReceivingPage() {
 
     if (lotMode === 'existing' && !selectedLotId) { setError('Select an existing product or switch to New Product.'); return }
     if (lotMode === 'new' && !origin.trim()) { setError('Origin is required.'); return }
-    if (!sacks || parseInt(sacks) <= 0) { setError('Number of sacks must be greater than 0.'); return }
-    if (!perSack || parseFloat(perSack) <= 0) { setError('Per-sack weight must be greater than 0.'); return }
-    if (!locationId) { setError('Location is required.'); return }
+
+    for (const row of locationRows) {
+      if (!row.locationId) { setError('Select a location for each row.'); return }
+      if (!row.sacks || parseInt(row.sacks) <= 0) { setError('Sacks must be greater than 0 in each row.'); return }
+      if (!row.perSack || parseFloat(row.perSack) <= 0) { setError('Per-sack weight must be greater than 0 in each row.'); return }
+    }
 
     setLoading(true)
 
     let lotId: string
-
     if (lotMode === 'existing') {
       lotId = selectedLotId
     } else {
@@ -145,98 +183,78 @@ export default function ReceivingPage() {
       lotId = lotData[0].id
     }
 
-    const selectedDate = new Date(receivedDate)
-    const mm = String(selectedDate.getMonth() + 1).padStart(2, '0')
-    const dd = String(selectedDate.getDate()).padStart(2, '0')
-    const yyyy = selectedDate.getFullYear()
-    const dateStr = `${mm}${dd}${yyyy}`
-    const { count } = await supabase
-      .from('batches')
-      .select('id', { count: 'exact', head: true })
-      .like('batch_number', `${dateStr}%`)
-    const seq = String((count ?? 0) + 1).padStart(2, '0')
-    const batchNumber = `${dateStr}-${seq}`
+    let createdBatchIds: string[] = []
 
-    const { data: batchData, error: batchError } = await supabase
-      .from('batches')
-      .insert([{
-        batch_number: batchNumber,
-        lot_id: lotId,
-        weight_kg: parseFloat(weightKg),
-        sacks: parseInt(sacks),
-        location_id: locationId,
-        received_at: receivedDate,
-        moisture_arrival: moisture ? parseFloat(moisture) : null,
-        source_reference: sourceRef.trim() || null,
-        notes: notes.trim() || null,
+    for (const row of locationRows) {
+      const d = new Date(row.receivedDate)
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      const dd = String(d.getDate()).padStart(2, '0')
+      const yyyy = d.getFullYear()
+      const dateStr = `${mm}${dd}${yyyy}`
+      const { count } = await supabase.from('batches').select('id', { count: 'exact', head: true }).like('batch_number', `${dateStr}%`)
+      const seq = String((count ?? 0) + 1 + createdBatchIds.length).padStart(2, '0')
+      const batchNumber = `${dateStr}-${seq}`
+
+      const { data: batchData, error: batchError } = await supabase
+        .from('batches')
+        .insert([{
+          batch_number: batchNumber,
+          lot_id: lotId,
+          weight_kg: parseFloat(row.weightKg),
+          sacks: parseInt(row.sacks),
+          location_id: row.locationId,
+          received_at: row.receivedDate,
+          source_reference: row.sourceRef.trim() || null,
+          notes: row.notes.trim() || null,
+        }])
+        .select()
+
+      if (batchError) { setError(batchError.message); setLoading(false); return }
+
+      await supabase.from('inventory_transactions').insert([{
+        batch_id: batchData[0].id,
+        type: 'receive',
+        weight_change_kg: parseFloat(row.weightKg),
+        notes: `Received ${row.sacks} sacks`,
       }])
-      .select()
 
-    if (batchError) { setError(batchError.message); setLoading(false); return }
-
-    await supabase.from('inventory_transactions').insert([{
-      batch_id: batchData[0].id,
-      type: 'receive',
-      weight_change_kg: parseFloat(weightKg),
-      notes: `Received ${sacks} sacks`,
-    }])
+      createdBatchIds.push(batchData[0].id)
+    }
 
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
     await queryClient.invalidateQueries({ queryKey: ['lots'] })
     await queryClient.invalidateQueries({ queryKey: ['lots-select'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
 
-    setLastBatch({ id: batchData[0].id, number: batchNumber, name: productName })
+    setSuccessCount(locationRows.length)
+    setLastProductName(productName)
+    setLastBatchId(createdBatchIds.length === 1 ? createdBatchIds[0] : null)
     setAssigningContractItem('')
     setAssignDone(false)
 
-    // Reset physical details only — preserve lot selection for quick repeat at different location
-    setWeightKg(''); setSacks(''); setPerSack(''); setLocationId('')
-    setReceivedDate(new Date().toISOString().slice(0, 10))
-    setMoisture(''); setSourceRef(''); setNotes('')
-
-    // Reset new lot fields only if new lot was created
+    setLocationRows([newLocationRow()])
     if (lotMode === 'new') {
       setOrigin(''); setRegion(''); setProducer(''); setProcess(''); setGrade(''); setOtherInfo(''); setTasteNotes('')
     }
-
     setLoading(false)
-  }
-
-  const handleSacksChange = (val: string) => {
-    setSacks(val)
-    const s = parseInt(val)
-    if (perSack && s > 0) setWeightKg((parseFloat(perSack) * s).toFixed(2))
-    else if (weightKg && s > 0) setPerSack((parseFloat(weightKg) / s).toFixed(2))
-  }
-
-  const handlePerSackChange = (val: string) => {
-    setPerSack(val)
-    const s = parseInt(sacks)
-    if (val && s > 0) setWeightKg((parseFloat(val) * s).toFixed(2))
-  }
-
-  const handleWeightChange = (val: string) => {
-    setWeightKg(val)
-    const s = parseInt(sacks)
-    if (val && s > 0) setPerSack((parseFloat(val) / s).toFixed(2))
   }
 
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Receive Stock</h1>
 
-      {lastBatch && (
+      {successCount !== null && (
         <div className="mb-6 border border-green-200 rounded-lg overflow-hidden">
           <div className="p-4 bg-green-50 flex items-start justify-between">
             <div>
-              <p className="font-medium text-green-800">Stock received successfully!</p>
-              <p className="text-sm text-green-700 mt-0.5">{lastBatch.name}</p>
-              <p className="text-xs text-green-600 mt-0.5">Batch #{lastBatch.number}</p>
+              <p className="font-medium text-green-800">
+                {successCount === 1 ? 'Stock received successfully!' : `${successCount} batches received successfully!`}
+              </p>
+              <p className="text-sm text-green-700 mt-0.5">{lastProductName}</p>
             </div>
-            <button onClick={() => setLastBatch(null)} className="text-green-500 hover:text-green-700 text-sm ml-4">✕</button>
+            <button onClick={() => setSuccessCount(null)} className="text-green-500 hover:text-green-700 text-sm ml-4">✕</button>
           </div>
-          {activeContractItems.length > 0 && !assignDone && (
+          {activeContractItems.length > 0 && lastBatchId && !assignDone && (
             <div className="p-4 bg-white border-t border-green-100">
               <p className="text-sm font-medium text-gray-700 mb-2">Assign to contract? <span className="text-gray-400 font-normal">(optional)</span></p>
               <div className="flex gap-2 items-center">
@@ -252,12 +270,7 @@ export default function ReceivingPage() {
                     </option>
                   ))}
                 </select>
-                <Button
-                  type="button"
-                  disabled={!assigningContractItem || assignLoading}
-                  onClick={handleAssign}
-                  className="shrink-0"
-                >
+                <Button type="button" disabled={!assigningContractItem || assignLoading} onClick={handleAssign} className="shrink-0">
                   {assignLoading ? 'Assigning…' : 'Assign'}
                 </Button>
               </div>
@@ -279,20 +292,8 @@ export default function ReceivingPage() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Product Identity</CardTitle>
               <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setLotMode('existing')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lotMode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  Existing product
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLotMode('new')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lotMode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  New product
-                </button>
+                <button type="button" onClick={() => setLotMode('existing')} className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lotMode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Existing product</button>
+                <button type="button" onClick={() => setLotMode('new')} className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lotMode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>New product</button>
               </div>
             </div>
           </CardHeader>
@@ -300,69 +301,31 @@ export default function ReceivingPage() {
             {lotMode === 'existing' ? (
               <div className="space-y-1.5">
                 <Label>Select product</Label>
-                <select
-                  value={selectedLotId}
-                  onChange={e => setSelectedLotId(e.target.value)}
-                  className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                >
+                <select value={selectedLotId} onChange={e => setSelectedLotId(e.target.value)} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                   <option value="">Choose a product…</option>
-                  {existingLots.map(l => (
-                    <option key={l.id} value={l.id}>{l.name}</option>
-                  ))}
+                  {existingLots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
-                {selectedLotId && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    A new batch will be created under this product at the location you choose below.
-                  </p>
-                )}
               </div>
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>Origin *</Label>
-                    <Input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="e.g. Ethiopia" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Region</Label>
-                    <Input value={region} onChange={e => setRegion(e.target.value)} placeholder="e.g. Sidama" />
-                  </div>
+                  <div className="space-y-1.5"><Label>Origin *</Label><Input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="e.g. Brazil" /></div>
+                  <div className="space-y-1.5"><Label>Region</Label><Input value={region} onChange={e => setRegion(e.target.value)} placeholder="e.g. Cerrado" /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>Producer / Farm</Label>
-                    <Input value={producer} onChange={e => setProducer(e.target.value)} placeholder="e.g. Daye Bensa" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Process <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                    <Input value={process} onChange={e => setProcess(e.target.value)} placeholder="e.g. Natural, Washed, Honey" />
-                  </div>
+                  <div className="space-y-1.5"><Label>Producer / Farm</Label><Input value={producer} onChange={e => setProducer(e.target.value)} placeholder="e.g. Fazenda Um" /></div>
+                  <div className="space-y-1.5"><Label>Process <span className="text-gray-400 font-normal text-xs">optional</span></Label><Input value={process} onChange={e => setProcess(e.target.value)} placeholder="e.g. Natural, Washed" /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>Grade <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                    <Input value={grade} onChange={e => setGrade(e.target.value)} placeholder="e.g. Grade 1" />
-                  </div>
+                  <div className="space-y-1.5"><Label>Grade <span className="text-gray-400 font-normal text-xs">optional</span></Label><Input value={grade} onChange={e => setGrade(e.target.value)} placeholder="e.g. Grade 1" /></div>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Other Info</Label>
-                  <textarea
-                    value={otherInfo}
-                    onChange={e => setOtherInfo(e.target.value)}
-                    rows={2}
-                    placeholder="Varietal, certifications, or any other product details…"
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
-                  />
+                  <textarea value={otherInfo} onChange={e => setOtherInfo(e.target.value)} rows={2} placeholder="Varietal, certifications, or any other details…" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none" />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Taste Notes <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                  <textarea
-                    value={tasteNotes}
-                    onChange={e => setTasteNotes(e.target.value)}
-                    rows={2}
-                    placeholder="e.g. Blueberry, jasmine, dark chocolate…"
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
-                  />
+                  <textarea value={tasteNotes} onChange={e => setTasteNotes(e.target.value)} rows={2} placeholder="e.g. Blueberry, jasmine, dark chocolate…" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none" />
                 </div>
                 {productName && (
                   <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
@@ -375,70 +338,64 @@ export default function ReceivingPage() {
           </CardContent>
         </Card>
 
-        {/* Physical Details */}
+        {/* Location Rows */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Physical Details</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Stock by Location</CardTitle>
+              <button type="button" onClick={addRow} className="text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add location</button>
+            </div>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-1.5">
-                <Label>Sacks *</Label>
-                <Input type="number" min="1" value={sacks} onChange={e => handleSacksChange(e.target.value)} placeholder="10" />
+          <CardContent className="space-y-6">
+            {locationRows.map((row, idx) => (
+              <div key={row.id} className="space-y-3">
+                {locationRows.length > 1 && (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Location {idx + 1}</p>
+                    <button type="button" onClick={() => removeRow(row.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Location *</Label>
+                    <select value={row.locationId} onChange={e => updateRow(row.id, 'locationId', e.target.value)} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                      <option value="">Select location…</option>
+                      {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Received Date</Label>
+                    <Input type="date" value={row.receivedDate} onChange={e => updateRow(row.id, 'receivedDate', e.target.value)} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Sacks *</Label>
+                    <Input type="number" min="1" value={row.sacks} onChange={e => updateRow(row.id, 'sacks', e.target.value)} placeholder="10" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Per Sack (kg) *</Label>
+                    <Input type="number" step="0.01" min="0" value={row.perSack} onChange={e => updateRow(row.id, 'perSack', e.target.value)} placeholder="60.00" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Total (kg)</Label>
+                    <Input type="number" step="0.01" min="0" value={row.weightKg} onChange={e => updateRow(row.id, 'weightKg', e.target.value)} placeholder="600.00" className="bg-gray-50" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Source Reference <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                  <Input value={row.sourceRef} onChange={e => updateRow(row.id, 'sourceRef', e.target.value)} placeholder="PO or OS number" />
+                </div>
+                {idx < locationRows.length - 1 && <div className="border-b border-gray-100 pt-2" />}
               </div>
-              <div className="space-y-1.5">
-                <Label>Per Sack (kg) *</Label>
-                <Input type="number" step="0.01" min="0" value={perSack} onChange={e => handlePerSackChange(e.target.value)} placeholder="60.00" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Total Weight (kg)</Label>
-                <Input type="number" step="0.01" min="0" value={weightKg} onChange={e => handleWeightChange(e.target.value)} placeholder="600.00" className="bg-gray-50" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>Location *</Label>
-                <select
-                  value={locationId}
-                  onChange={e => setLocationId(e.target.value)}
-                  className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                >
-                  <option value="">Select location…</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Moisture % <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                <Input type="number" step="0.01" min="0" max="100" value={moisture} onChange={e => setMoisture(e.target.value)} placeholder="11.50" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>Received Date</Label>
-                <Input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Source Reference <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-                <Input value={sourceRef} onChange={e => setSourceRef(e.target.value)} placeholder="PO or OS number" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notes <span className="text-gray-400 font-normal text-xs">optional</span></Label>
-              <textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                rows={2}
-                placeholder="Any additional notes…"
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
-              />
-            </div>
+            ))}
           </CardContent>
         </Card>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <Button type="submit" disabled={loading} className="w-full">
-          {loading ? 'Receiving…' : 'Receive Stock'}
+          {loading ? 'Receiving…' : locationRows.length === 1 ? 'Receive Stock' : `Receive Stock — ${locationRows.length} locations`}
         </Button>
       </form>
     </div>
