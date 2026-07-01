@@ -36,10 +36,6 @@ export default function InventoryPage() {
   const [editDate, setEditDate] = useState('')
   const [editSaving, setEditSaving] = useState(false)
 
-  // Lot name inline edit
-  const [editingLotId, setEditingLotId] = useState<string | null>(null)
-  const [editLotName, setEditLotName] = useState('')
-  const [lotNameSaving, setLotNameSaving] = useState(false)
 
   const { data: batches = [], isLoading } = useQuery<Batch[]>({
     queryKey: ['batches'],
@@ -60,18 +56,7 @@ export default function InventoryPage() {
     setEditDate(batch.received_at.slice(0, 10))
   }
 
-  const saveLotName = async () => {
-    if (!editingLotId || !editLotName.trim()) return
-    setLotNameSaving(true)
-    await supabase.from('lots').update({ name: editLotName.trim() }).eq('id', editingLotId)
-    await queryClient.invalidateQueries({ queryKey: ['batches'] })
-    await queryClient.invalidateQueries({ queryKey: ['lots-select'] })
-    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    setEditingLotId(null)
-    setLotNameSaving(false)
-  }
-
-  const saveEdit = async (id: string) => {
+const saveEdit = async (id: string) => {
     setEditSaving(true)
     await supabase.from('batches').update({
       sacks: parseInt(editSacks),
@@ -163,29 +148,7 @@ export default function InventoryPage() {
                   return (
                     <tr key={batch.id} className={`border-b border-gray-100 ${isEditing ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
                       <td className="px-4 py-3 font-mono text-xs text-gray-600">{batch.batch_number}</td>
-                      <td className="px-4 py-3 font-medium text-gray-900">
-                        {editingLotId === batch.lot_id ? (
-                          <div className="flex gap-1.5 items-center">
-                            <input
-                              autoFocus
-                              value={editLotName}
-                              onChange={e => setEditLotName(e.target.value)}
-                              onKeyDown={e => { if (e.key === 'Enter') saveLotName(); if (e.key === 'Escape') setEditingLotId(null) }}
-                              className="border border-blue-400 rounded px-2 py-1 text-sm w-64 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button onClick={saveLotName} disabled={lotNameSaving} className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-50">{lotNameSaving ? '…' : 'Save'}</button>
-                            <button onClick={() => setEditingLotId(null)} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                          </div>
-                        ) : (
-                          <span
-                            className="cursor-pointer hover:text-blue-600 hover:underline"
-                            onClick={() => { setEditingLotId(batch.lot_id); setEditLotName(batch.lots?.name ?? '') }}
-                            title="Click to edit product name"
-                          >
-                            {batch.lots?.name ?? '—'}
-                          </span>
-                        )}
-                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-900">{batch.lots?.name ?? '—'}</td>
                       <td className="px-4 py-3">
                         {contractRef ? (
                           <div>

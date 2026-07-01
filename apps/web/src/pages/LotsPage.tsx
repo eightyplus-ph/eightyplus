@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
 
@@ -9,30 +10,50 @@ interface Lot {
   region: string | null
   producer: string | null
   grade: string | null
-  varietal: string | null
   process: string | null
   created_at: string
 }
 
 export default function LotsPage() {
+  const queryClient = useQueryClient()
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [saving, setSaving] = useState(false)
+
   const { data: lots = [], isLoading } = useQuery<Lot[]>({
     queryKey: ['lots'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('lots')
-        .select('*')
-        .order('created_at', { ascending: false })
+      const { data, error } = await supabase.from('lots').select('*').order('name')
       if (error) throw error
       return data
     },
   })
+
+  const startEdit = (lot: Lot) => {
+    setEditingId(lot.id)
+    setEditName(lot.name)
+  }
+
+  const saveEdit = async () => {
+    if (!editingId || !editName.trim()) return
+    setSaving(true)
+    await supabase.from('lots').update({ name: editName.trim() }).eq('id', editingId)
+    await queryClient.invalidateQueries({ queryKey: ['lots'] })
+    await queryClient.invalidateQueries({ queryKey: ['lots-select'] })
+    await queryClient.invalidateQueries({ queryKey: ['batches'] })
+    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    setEditingId(null)
+    setSaving(false)
+  }
+
+  const cancelEdit = () => setEditingId(null)
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Product Names</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Product names are generated when you receive stock.</p>
+          <p className="text-sm text-gray-500 mt-0.5">Click any product name to edit it.</p>
         </div>
       </div>
 
@@ -43,8 +64,8 @@ export default function LotsPage() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Product Name</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Origin</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Region</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Producer</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500">Process</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Grade</th>
               </tr>
             </thead>
@@ -55,16 +76,40 @@ export default function LotsPage() {
               {!isLoading && lots.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-12 text-center text-gray-400">
-                    No lots yet — receive stock to create your first coffee lot.
+                    No products yet — receive stock to create your first lot.
                   </td>
                 </tr>
               )}
               {lots.map(lot => (
-                <tr key={lot.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{lot.name}</td>
+                <tr key={lot.id} className={`border-b border-gray-100 ${editingId === lot.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    {editingId === lot.id ? (
+                      <div className="flex gap-1.5 items-center">
+                        <input
+                          autoFocus
+                          value={editName}
+                          onChange={e => setEditName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit() }}
+                          className="border border-blue-400 rounded px-2 py-1 text-sm w-72 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                        <button onClick={saveEdit} disabled={saving} className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-50">
+                          {saving ? '…' : 'Save'}
+                        </button>
+                        <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                      </div>
+                    ) : (
+                      <span
+                        className="cursor-pointer hover:text-blue-600 hover:underline"
+                        onClick={() => startEdit(lot)}
+                        title="Click to edit"
+                      >
+                        {lot.name}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-600">{lot.origin}</td>
-                  <td className="px-4 py-3 text-gray-600">{lot.region ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{lot.producer ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{lot.process ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{lot.grade ?? '—'}</td>
                 </tr>
               ))}
