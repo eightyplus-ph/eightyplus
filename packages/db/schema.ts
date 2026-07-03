@@ -145,6 +145,7 @@ export const profiles = pgTable('profiles', {
   role: text('role').notNull().default('ops'),
   can_create_dispatches: boolean('can_create_dispatches').notNull().default(false),
   can_manage_contracts: boolean('can_manage_contracts').notNull().default(false),
+  can_view_orders: boolean('can_view_orders').notNull().default(false),
   created_at: timestamp('created_at').defaultNow().notNull(),
 })
 

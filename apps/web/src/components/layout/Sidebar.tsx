@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useProfile } from '@/lib/profile'
+import { useProfile, canViewOrders, type Profile } from '@/lib/profile'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-interface NavLink { label: string; href: string; roles?: string[] }
+interface NavLink { label: string; href: string; roles?: string[]; checkFn?: (p: Profile | null) => boolean }
 
 const ALL_NAV: NavLink[] = [
   { label: 'Dashboard',     href: '/' },
@@ -14,7 +14,7 @@ const ALL_NAV: NavLink[] = [
   { label: 'Product Names', href: '/lots' },
   { label: 'Locations',     href: '/locations',  roles: ['admin', 'ops', 'manager'] },
   { label: 'Clients',       href: '/clients',    roles: ['admin', 'manager', 'sales'] },
-  { label: 'Orders',        href: '/orders',     roles: ['admin', 'manager', 'sales'] },
+  { label: 'Orders',        href: '/orders',     roles: ['admin', 'manager', 'sales'], checkFn: canViewOrders },
   { label: 'Dispatches',    href: '/dispatches', roles: ['admin', 'ops', 'sales'] },
   { label: 'Contracts',     href: '/contracts',  roles: ['admin', 'manager', 'sales'] },
 ]
@@ -38,6 +38,7 @@ export default function Sidebar() {
   const visibleLinks = ALL_NAV.filter(link => {
     if (!link.roles) return true
     if (!profile) return true // show all while loading
+    if (link.checkFn) return link.checkFn(profile)
     return link.roles.includes(profile.role)
   })
 
