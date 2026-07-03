@@ -236,7 +236,7 @@ export default function OrdersPage() {
     e.preventDefault()
     setFormError('')
     if (!clientId) { setFormError('Select a client.'); return }
-    const validItems = lineItems.filter(l => l.lotId && l.locationId && parseFloat(l.kg) > 0 && parseFloat(l.pricePerKg) > 0)
+    const validItems = lineItems.filter(l => l.lotId && l.locationId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0)
     if (validItems.length === 0) { setFormError('Add at least one complete line item.'); return }
     setSubmitting(true)
 
