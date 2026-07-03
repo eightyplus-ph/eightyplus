@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { useProfile } from '@/lib/profile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -43,7 +44,9 @@ interface Order {
   notes: string | null
   created_at: string
   payment_proof_url: string | null
+  created_by: string | null
   clients: { company_name: string } | null
+  profiles: { full_name: string } | null
   order_items: OrderItem[]
   dispatches: Dispatch[]
 }
@@ -133,6 +136,7 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
 
 export default function OrdersPage() {
   const queryClient = useQueryClient()
+  const { data: profile } = useProfile()
 
   const [showForm, setShowForm] = useState(false)
   const [clientId, setClientId] = useState('')
@@ -170,7 +174,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name), order_items(id, lot_id, weight_ordered_kg, price_per_kg, lots(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name), profiles(full_name), order_items(id, lot_id, weight_ordered_kg, price_per_kg, lots(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]
@@ -218,7 +222,7 @@ export default function OrdersPage() {
     }
 
     const { data: orderData, error: orderErr } = await supabase.from('orders')
-      .insert([{ os_number: finalOsNumber, client_id: clientId, status: 'reserved', order_date: orderDate, notes: notes.trim() || null }])
+      .insert([{ os_number: finalOsNumber, client_id: clientId, status: 'reserved', order_date: orderDate, notes: notes.trim() || null, created_by: profile?.id ?? null }])
       .select()
     if (orderErr) { setFormError(orderErr.message); setSubmitting(false); return }
 

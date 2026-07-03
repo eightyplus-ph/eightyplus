@@ -111,6 +111,7 @@ export const orders = pgTable('orders', {
   order_date: date('order_date').notNull(),
   notes: text('notes'),
   scheduled_dispatch_date: date('scheduled_dispatch_date'),
+  created_by: uuid('created_by').references(() => profiles.id),
   created_at: timestamp('created_at').defaultNow().notNull(),
 })
 
