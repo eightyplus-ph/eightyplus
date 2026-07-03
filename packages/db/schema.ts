@@ -119,6 +119,7 @@ export const orderItems = pgTable('order_items', {
   id: uuid('id').primaryKey().defaultRandom(),
   order_id: uuid('order_id').references(() => orders.id).notNull(),
   lot_id: uuid('lot_id').references(() => lots.id).notNull(),
+  location_id: uuid('location_id').references(() => locations.id),
   weight_ordered_kg: numeric('weight_ordered_kg', { precision: 10, scale: 2 }).notNull(),
   price_per_kg: numeric('price_per_kg', { precision: 10, scale: 2 }).notNull(),
 })

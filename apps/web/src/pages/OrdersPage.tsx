@@ -10,8 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Client { id: string; company_name: string }
-interface Lot { id: string; name: string }
-interface LineItemState { uid: string; lotId: string; kg: string; pricePerKg: string }
+interface Lot { id: string; name: string; price_per_kg: number | null }
+interface LocationStock { locationId: string; locationName: string; availableKg: number }
+interface LineItemState { uid: string; lotId: string; locationId: string; kg: string; pricePerKg: string }
 
 interface DispatchItem { weight_dispatched_kg: string }
 interface OrderItem {
@@ -143,7 +144,7 @@ export default function OrdersPage() {
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10))
   const [osNumber, setOsNumber] = useState('')
   const [notes, setNotes] = useState('')
-  const [lineItems, setLineItems] = useState<LineItemState[]>([{ uid: uid(), lotId: '', kg: '', pricePerKg: '' }])
+  const [lineItems, setLineItems] = useState<LineItemState[]>([{ uid: uid(), lotId: '', locationId: '', kg: '', pricePerKg: '' }])
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -163,9 +164,31 @@ export default function OrdersPage() {
   const { data: lots = [] } = useQuery<Lot[]>({
     queryKey: ['lots-select'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('lots').select('id, name').order('name')
+      const { data, error } = await supabase.from('lots').select('id, name, price_per_kg').order('name')
       if (error) throw error
       return data as Lot[]
+    },
+  })
+
+  const { data: stockByLot = {} } = useQuery<Record<string, LocationStock[]>>({
+    queryKey: ['stock-by-lot'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('batches')
+        .select('lot_id, location_id, weight_kg, locations(name)')
+        .is('contract_item_id', null)
+      if (error) throw error
+      const map: Record<string, Record<string, LocationStock>> = {}
+      for (const b of data ?? []) {
+        const lotId = b.lot_id as string
+        const locationId = b.location_id as string
+        const locationName = (b.locations as unknown as { name: string } | null)?.name ?? 'Unknown'
+        const kg = parseFloat(b.weight_kg ?? '0')
+        if (!map[lotId]) map[lotId] = {}
+        if (!map[lotId][locationId]) map[lotId][locationId] = { locationId, locationName, availableKg: 0 }
+        map[lotId][locationId].availableKg += kg
+      }
+      return Object.fromEntries(Object.entries(map).map(([k, v]) => [k, Object.values(v)]))
     },
   })
 
@@ -190,15 +213,22 @@ export default function OrdersPage() {
       )
     : orders
 
-  const addLine = () => setLineItems(prev => [...prev, { uid: uid(), lotId: '', kg: '', pricePerKg: '' }])
+  const addLine = () => setLineItems(prev => [...prev, { uid: uid(), lotId: '', locationId: '', kg: '', pricePerKg: '' }])
   const removeLine = (id: string) => setLineItems(prev => prev.filter(l => l.uid !== id))
   const updateLine = (id: string, field: keyof Omit<LineItemState, 'uid'>, value: string) =>
     setLineItems(prev => prev.map(l => l.uid === id ? { ...l, [field]: value } : l))
+  const updateLot = (lineUid: string, lotId: string) => {
+    const lot = lots.find(l => l.id === lotId)
+    setLineItems(prev => prev.map(l => l.uid === lineUid
+      ? { ...l, lotId, locationId: '', pricePerKg: lot?.price_per_kg != null ? String(lot.price_per_kg) : l.pricePerKg }
+      : l
+    ))
+  }
 
   const resetForm = () => {
     setClientId(''); setOrderDate(new Date().toISOString().slice(0, 10))
     setOsNumber(''); setNotes('')
-    setLineItems([{ uid: uid(), lotId: '', kg: '', pricePerKg: '' }])
+    setLineItems([{ uid: uid(), lotId: '', locationId: '', kg: '', pricePerKg: '' }])
     setFormError(''); setShowForm(false)
   }
 
@@ -206,7 +236,7 @@ export default function OrdersPage() {
     e.preventDefault()
     setFormError('')
     if (!clientId) { setFormError('Select a client.'); return }
-    const validItems = lineItems.filter(l => l.lotId && parseFloat(l.kg) > 0 && parseFloat(l.pricePerKg) > 0)
+    const validItems = lineItems.filter(l => l.lotId && l.locationId && parseFloat(l.kg) > 0 && parseFloat(l.pricePerKg) > 0)
     if (validItems.length === 0) { setFormError('Add at least one complete line item.'); return }
     setSubmitting(true)
 
@@ -227,7 +257,7 @@ export default function OrdersPage() {
     if (orderErr) { setFormError(orderErr.message); setSubmitting(false); return }
 
     const { error: itemsErr } = await supabase.from('order_items').insert(
-      validItems.map(l => ({ order_id: orderData[0].id, lot_id: l.lotId, weight_ordered_kg: parseFloat(l.kg), price_per_kg: parseFloat(l.pricePerKg) }))
+      validItems.map(l => ({ order_id: orderData[0].id, lot_id: l.lotId, location_id: l.locationId, weight_ordered_kg: parseFloat(l.kg), price_per_kg: parseFloat(l.pricePerKg) }))
     )
     if (itemsErr) { setFormError(itemsErr.message); setSubmitting(false); return }
 
@@ -287,29 +317,41 @@ export default function OrdersPage() {
                 <div className="space-y-2">
                   {lineItems.map((line, idx) => {
                     const lineTotal = parseFloat(line.kg || '0') * parseFloat(line.pricePerKg || '0')
+                    const locationOptions = line.lotId ? (stockByLot[line.lotId] ?? []) : []
                     return (
                       <div key={line.uid} className="grid grid-cols-12 gap-2 items-center">
-                        <div className="col-span-5">
-                          <select value={line.lotId} onChange={e => updateLine(line.uid, 'lotId', e.target.value)} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                        <div className="col-span-4">
+                          <select value={line.lotId} onChange={e => updateLot(line.uid, e.target.value)} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                             <option value="">Product…</option>
                             {lots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                           </select>
                         </div>
+                        <div className="col-span-3">
+                          <select value={line.locationId} onChange={e => updateLine(line.uid, 'locationId', e.target.value)} disabled={!line.lotId} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-40">
+                            <option value="">Location…</option>
+                            {locationOptions.map(loc => (
+                              <option key={loc.locationId} value={loc.locationId}>{loc.locationName} ({Math.round(loc.availableKg)} kg)</option>
+                            ))}
+                          </select>
+                        </div>
                         <div className="col-span-2"><Input type="number" min="0" placeholder="kg" value={line.kg} onChange={e => updateLine(line.uid, 'kg', e.target.value)} /></div>
                         <div className="col-span-2"><Input type="number" min="0" step="0.01" placeholder="₱/kg" value={line.pricePerKg} onChange={e => updateLine(line.uid, 'pricePerKg', e.target.value)} /></div>
-                        <div className="col-span-2 text-right text-sm text-gray-500 pr-1">{lineTotal > 0 ? `₱${lineTotal.toLocaleString()}` : '—'}</div>
-                        <div className="col-span-1 flex justify-end">
-                          {idx > 0 && <button type="button" onClick={() => removeLine(line.uid)} className="text-gray-300 hover:text-red-400 text-sm">✕</button>}
+                        <div className="col-span-1 text-right text-xs text-gray-500 pr-1">
+                          <div>{lineTotal > 0 ? `₱${Math.round(lineTotal).toLocaleString()}` : '—'}</div>
+                          <div className="col-span-1 flex justify-end mt-0.5">
+                            {idx > 0 && <button type="button" onClick={() => removeLine(line.uid)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
+                          </div>
                         </div>
                       </div>
                     )
                   })}
                 </div>
                 <div className="grid grid-cols-12 gap-2 mt-1 text-xs text-gray-400 px-0.5">
-                  <div className="col-span-5">Product</div>
+                  <div className="col-span-4">Product</div>
+                  <div className="col-span-3">Location</div>
                   <div className="col-span-2">Weight (kg)</div>
                   <div className="col-span-2">Price (₱/kg)</div>
-                  <div className="col-span-2 text-right">Subtotal</div>
+                  <div className="col-span-1 text-right">Subtotal</div>
                 </div>
               </div>
 
