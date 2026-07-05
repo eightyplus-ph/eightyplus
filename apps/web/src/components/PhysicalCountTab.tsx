@@ -26,6 +26,7 @@ interface CountBatch {
   id: string
   batch_number: string
   weight_kg: string
+  sacks: number | null
   lots: { name: string } | null
   locations: { name: string } | null
 }
@@ -37,6 +38,7 @@ interface PhysicalCountItem {
   counted_kg: string
   batches: {
     batch_number: string
+    sacks: number | null
     lots: { name: string } | null
     locations: { name: string } | null
   } | null
@@ -134,7 +136,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, weight_kg, lots(name), locations(name)')
+        .select('id, batch_number, weight_kg, sacks, lots(name), locations(name)')
         .gt('weight_kg', 0)
         .order('received_at', { ascending: false })
       if (error) throw error
@@ -216,13 +218,14 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
               <tr className="border-b border-gray-100">
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch #</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sacks</th>
                 <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
                 <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
                 <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
+              {isLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
               {(() => {
                 const grouped = batches.reduce<Record<string, CountBatch[]>>((acc, b) => {
                   const loc = b.locations?.name ?? 'Untagged'
@@ -232,7 +235,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                 return Object.entries(grouped).map(([locName, locBatches]) => (
                   <>
                     <tr key={`loc-${locName}`}>
-                      <td colSpan={5} className="px-4 pt-4 pb-1.5">
+                      <td colSpan={6} className="px-4 pt-4 pb-1.5">
                         <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
                         <div className="mt-1 h-px bg-gray-200" />
                       </td>
@@ -246,6 +249,11 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                         <tr key={batch.id} className={`border-b border-gray-100 ${isDirty ? 'bg-amber-50/60' : ''}`}>
                           <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
                           <td className="px-4 py-2.5 font-medium text-gray-900">{batch.lots?.name ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            {batch.sacks != null
+                              ? <span className="font-semibold text-gray-800 tabular-nums">{batch.sacks} <span className="text-gray-400 font-normal text-xs">sacks</span></span>
+                              : <span className="text-gray-300 text-xs">—</span>}
+                          </td>
                           <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
                           <td className="px-4 py-2.5 text-right">
                             <input
@@ -274,7 +282,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             {batches.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td colSpan={4} className="px-4 py-3 text-sm font-semibold text-gray-700 text-right">Net variance</td>
+                  <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-gray-700 text-right">Net variance</td>
                   <td className="px-4 py-3 text-right">
                     <VarianceBadge variance={netVariance} />
                   </td>
@@ -314,7 +322,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     queryFn: async () => {
       const { data, error } = await supabase
         .from('physical_count_items')
-        .select('id, batch_id, system_kg, counted_kg, batches(batch_number, lots(name), locations(name))')
+        .select('id, batch_id, system_kg, counted_kg, batches(batch_number, sacks, lots(name), locations(name))')
         .eq('physical_count_id', count.id)
       if (error) throw error
       return data as unknown as PhysicalCountItem[]
@@ -390,16 +398,17 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Batch #</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">System kg</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Counted kg</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Variance</th>
+              <tr className="border-b border-gray-100">
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch #</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sacks</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
               {(() => {
                 const grouped = items.reduce<Record<string, PhysicalCountItem[]>>((acc, i) => {
                   const loc = i.batches?.locations?.name ?? 'Untagged'
@@ -408,8 +417,11 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                 }, {})
                 return Object.entries(grouped).map(([locName, locItems]) => (
                   <>
-                    <tr key={`loc-${locName}`} className="bg-blue-50 border-t border-blue-100">
-                      <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-blue-700 uppercase tracking-wide">{locName}</td>
+                    <tr key={`loc-${locName}`}>
+                      <td colSpan={6} className="px-4 pt-4 pb-1.5">
+                        <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
+                        <div className="mt-1 h-px bg-gray-200" />
+                      </td>
                     </tr>
                     {locItems.map(item => {
                       const system = parseFloat(item.system_kg)
@@ -418,11 +430,16 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                       const hasVariance = Math.abs(variance) >= 0.01
                       return (
                         <tr key={item.id} className={`border-b border-gray-100 ${hasVariance ? 'bg-red-50/40' : ''}`}>
-                          <td className="px-4 py-2 font-mono text-xs text-gray-600">{item.batches?.batch_number ?? '—'}</td>
-                          <td className="px-4 py-2 text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
-                          <td className="px-4 py-2 text-right text-gray-500">{system.toFixed(2)}</td>
-                          <td className="px-4 py-2 text-right text-gray-900 font-medium">{counted.toFixed(2)}</td>
-                          <td className="px-4 py-2 text-right"><VarianceBadge variance={variance} /></td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{item.batches?.batch_number ?? '—'}</td>
+                          <td className="px-4 py-2.5 font-medium text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            {item.batches?.sacks != null
+                              ? <span className="font-semibold text-gray-800 tabular-nums">{item.batches.sacks} <span className="text-gray-400 font-normal text-xs">sacks</span></span>
+                              : <span className="text-gray-300 text-xs">—</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900 tabular-nums">{counted.toFixed(2)}</td>
+                          <td className="px-4 py-2.5 text-right"><VarianceBadge variance={variance} /></td>
                         </tr>
                       )
                     })}
