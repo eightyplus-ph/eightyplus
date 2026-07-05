@@ -244,7 +244,13 @@ function OrderCard({
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          <p className="text-lg font-bold text-gray-900">{Math.round(remaining)} kg</p>
+          <div className="text-right">
+            <p className="text-lg font-bold text-gray-900">{Math.round(remaining)} kg</p>
+            {(() => {
+              const locs = [...new Set(order.order_items.map(i => i.locations?.name).filter(Boolean))]
+              return locs.length > 0 ? <p className="text-sm font-medium text-blue-600">{locs.join(' · ')}</p> : <p className="text-sm text-amber-500">Untagged</p>
+            })()}
+          </div>
 
           <div className="flex flex-col items-end gap-1">
             <Button
