@@ -209,45 +209,57 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Batch #</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Location</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">System kg</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Counted kg</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Variance</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
-              {batches.map(batch => {
-                const counted = parseFloat(getQty(batch) || '0')
-                const system = parseFloat(batch.weight_kg)
-                const variance = counted - system
-                return (
-                  <tr key={batch.id} className="border-b border-gray-100">
-                    <td className="px-4 py-2 font-mono text-xs text-gray-600">{batch.batch_number}</td>
-                    <td className="px-4 py-2 text-gray-900">{batch.lots?.name ?? '—'}</td>
-                    <td className="px-4 py-2 text-gray-500">{batch.locations?.name ?? '—'}</td>
-                    <td className="px-4 py-2 text-right text-gray-500">{system.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={getQty(batch)}
-                        onChange={e => setQuantities(prev => ({ ...prev, [batch.id]: e.target.value }))}
-                        className="w-24 text-right rounded border border-gray-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <VarianceBadge variance={variance} />
-                    </td>
-                  </tr>
-                )
-              })}
+              {isLoading && <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
+              {(() => {
+                const grouped = batches.reduce<Record<string, CountBatch[]>>((acc, b) => {
+                  const loc = b.locations?.name ?? 'Untagged'
+                  ;(acc[loc] ??= []).push(b)
+                  return acc
+                }, {})
+                return Object.entries(grouped).map(([locName, locBatches]) => (
+                  <>
+                    <tr key={`loc-${locName}`} className="bg-blue-50 border-t border-blue-100">
+                      <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-blue-700 uppercase tracking-wide">{locName}</td>
+                    </tr>
+                    {locBatches.map(batch => {
+                      const counted = parseFloat(getQty(batch) || '0')
+                      const system = parseFloat(batch.weight_kg)
+                      const variance = counted - system
+                      return (
+                        <tr key={batch.id} className="border-b border-gray-100">
+                          <td className="px-4 py-2 font-mono text-xs text-gray-600">{batch.batch_number}</td>
+                          <td className="px-4 py-2 text-gray-900">{batch.lots?.name ?? '—'}</td>
+                          <td className="px-4 py-2 text-right text-gray-500">{system.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={getQty(batch)}
+                              onChange={e => setQuantities(prev => ({ ...prev, [batch.id]: e.target.value }))}
+                              className="w-24 text-right rounded border border-gray-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <VarianceBadge variance={variance} />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </>
+                ))
+              })()}
             </tbody>
             {batches.length > 0 && (
               <tfoot>
                 <tr className="border-t border-gray-200 bg-gray-50">
-                  <td colSpan={5} className="px-4 py-2 text-sm font-medium text-gray-500 text-right">Net variance</td>
+                  <td colSpan={4} className="px-4 py-2 text-sm font-medium text-gray-500 text-right">Net variance</td>
                   <td className="px-4 py-2 text-right">
                     <VarianceBadge variance={netVariance} />
                   </td>
@@ -363,34 +375,42 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Batch #</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Location</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">System kg</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Counted kg</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Variance</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
-              {items.map(item => {
-                const system = parseFloat(item.system_kg)
-                const counted = parseFloat(item.counted_kg)
-                const variance = counted - system
-                const hasVariance = Math.abs(variance) >= 0.01
-                return (
-                  <tr key={item.id} className={`border-b border-gray-100 ${hasVariance ? 'bg-red-50/40' : ''}`}>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-600">
-                      {item.batches?.batch_number ?? '—'}
-                    </td>
-                    <td className="px-4 py-2 text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
-                    <td className="px-4 py-2 text-gray-500">{item.batches?.locations?.name ?? '—'}</td>
-                    <td className="px-4 py-2 text-right text-gray-500">{system.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right text-gray-900 font-medium">{counted.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right">
-                      <VarianceBadge variance={variance} />
-                    </td>
-                  </tr>
-                )
-              })}
+              {isLoading && <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
+              {(() => {
+                const grouped = items.reduce<Record<string, PhysicalCountItem[]>>((acc, i) => {
+                  const loc = i.batches?.locations?.name ?? 'Untagged'
+                  ;(acc[loc] ??= []).push(i)
+                  return acc
+                }, {})
+                return Object.entries(grouped).map(([locName, locItems]) => (
+                  <>
+                    <tr key={`loc-${locName}`} className="bg-blue-50 border-t border-blue-100">
+                      <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-blue-700 uppercase tracking-wide">{locName}</td>
+                    </tr>
+                    {locItems.map(item => {
+                      const system = parseFloat(item.system_kg)
+                      const counted = parseFloat(item.counted_kg)
+                      const variance = counted - system
+                      const hasVariance = Math.abs(variance) >= 0.01
+                      return (
+                        <tr key={item.id} className={`border-b border-gray-100 ${hasVariance ? 'bg-red-50/40' : ''}`}>
+                          <td className="px-4 py-2 font-mono text-xs text-gray-600">{item.batches?.batch_number ?? '—'}</td>
+                          <td className="px-4 py-2 text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
+                          <td className="px-4 py-2 text-right text-gray-500">{system.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right text-gray-900 font-medium">{counted.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right"><VarianceBadge variance={variance} /></td>
+                        </tr>
+                      )
+                    })}
+                  </>
+                ))
+              })()}
             </tbody>
           </table>
         </div>
