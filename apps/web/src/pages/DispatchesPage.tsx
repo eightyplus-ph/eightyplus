@@ -12,8 +12,10 @@ interface DispatchItemRecord { weight_dispatched_kg: string }
 interface OrderItem {
   id: string
   lot_id: string
+  location_id: string | null
   weight_ordered_kg: string
   lots: { name: string } | null
+  locations: { name: string } | null
   dispatch_items: DispatchItemRecord[]
 }
 interface PendingOrder {
@@ -235,6 +237,7 @@ function OrderCard({
             {order.order_items.filter(i => remainingKg(i) > 0).map(item => (
               <p key={item.id} className="text-xs text-gray-500">
                 {item.lots?.name ?? '—'} · <span className="font-medium text-gray-700">{Math.round(remainingKg(item))} kg</span>
+                {item.locations?.name && <span className="ml-1 text-gray-400">· {item.locations.name}</span>}
               </p>
             ))}
           </div>
@@ -313,7 +316,7 @@ export default function DispatchesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, weight_ordered_kg, lots(name), dispatch_items(weight_dispatched_kg))')
+        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg))')
         .eq('status', 'confirmed')
         .order('scheduled_dispatch_date', { ascending: true, nullsFirst: false })
       if (error) throw error

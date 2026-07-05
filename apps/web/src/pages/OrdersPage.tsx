@@ -18,9 +18,11 @@ interface DispatchItem { weight_dispatched_kg: string }
 interface OrderItem {
   id: string
   lot_id: string
+  location_id: string | null
   weight_ordered_kg: string
   price_per_kg: string
   lots: { name: string } | null
+  locations: { name: string } | null
   dispatch_items: DispatchItem[]
 }
 interface DispatchLineItem {
@@ -197,7 +199,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name), profiles(full_name), order_items(id, lot_id, weight_ordered_kg, price_per_kg, lots(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name), profiles(full_name), order_items(id, lot_id, location_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]
@@ -450,6 +452,7 @@ export default function OrdersPage() {
                             <thead>
                               <tr className="text-gray-400">
                                 <th className="text-left pb-1 font-medium">Product</th>
+                                <th className="text-left pb-1 font-medium">Location</th>
                                 <th className="text-right pb-1 font-medium">Ordered</th>
                                 <th className="text-right pb-1 font-medium">Dispatched</th>
                                 <th className="text-right pb-1 font-medium">Remaining</th>
@@ -464,6 +467,7 @@ export default function OrdersPage() {
                                 return (
                                   <tr key={item.id} className="border-t border-gray-100">
                                     <td className="py-1.5 text-gray-700">{item.lots?.name ?? '—'}</td>
+                                    <td className="py-1.5 text-xs text-gray-500">{item.locations?.name ?? <span className="text-amber-500">Untagged</span>}</td>
                                     <td className="py-1.5 text-right text-gray-700">{Math.round(parseFloat(item.weight_ordered_kg))} kg</td>
                                     <td className="py-1.5 text-right text-gray-600">{Math.round(dis)} kg</td>
                                     <td className={`py-1.5 text-right font-medium ${rem > 0 ? 'text-amber-600' : 'text-green-600'}`}>{rem > 0 ? `${Math.round(rem)} kg` : '✓ Done'}</td>
