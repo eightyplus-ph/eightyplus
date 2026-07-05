@@ -182,10 +182,17 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     setSubmitting(false)
   }
 
+  const changedCount = batches.filter(b => {
+    const qty = quantities[b.id]
+    if (qty === undefined) return false
+    return Math.abs(parseFloat(qty) - parseFloat(b.weight_kg)) >= 0.01
+  }).length
+
   return (
     <div className="space-y-6">
+      {/* Form header */}
       <div className="flex items-start justify-between">
-        <div className="grid grid-cols-2 gap-4 max-w-md">
+        <div className="grid grid-cols-2 gap-4 max-w-lg">
           <div className="space-y-1.5">
             <Label>Count Date *</Label>
             <Input type="date" value={countDate} onChange={e => setCountDate(e.target.value)} />
@@ -199,19 +206,19 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any notes about this count…" />
           </div>
         </div>
-        <button onClick={onCancel} className="text-sm text-gray-400 hover:text-gray-600">Cancel</button>
+        <button onClick={onCancel} className="text-sm text-gray-400 hover:text-gray-600 mt-1">Cancel</button>
       </div>
 
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Batch #</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">System kg</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Counted kg</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Variance</th>
+              <tr className="border-b border-gray-100">
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch #</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
             </thead>
             <tbody>
@@ -224,29 +231,37 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                 }, {})
                 return Object.entries(grouped).map(([locName, locBatches]) => (
                   <>
-                    <tr key={`loc-${locName}`} className="bg-blue-50 border-t border-blue-100">
-                      <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-blue-700 uppercase tracking-wide">{locName}</td>
+                    <tr key={`loc-${locName}`}>
+                      <td colSpan={5} className="px-4 pt-4 pb-1.5">
+                        <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
+                        <div className="mt-1 h-px bg-gray-200" />
+                      </td>
                     </tr>
                     {locBatches.map(batch => {
                       const counted = parseFloat(getQty(batch) || '0')
                       const system = parseFloat(batch.weight_kg)
                       const variance = counted - system
+                      const isDirty = quantities[batch.id] !== undefined && Math.abs(variance) >= 0.01
                       return (
-                        <tr key={batch.id} className="border-b border-gray-100">
-                          <td className="px-4 py-2 font-mono text-xs text-gray-600">{batch.batch_number}</td>
-                          <td className="px-4 py-2 text-gray-900">{batch.lots?.name ?? '—'}</td>
-                          <td className="px-4 py-2 text-right text-gray-500">{system.toFixed(2)}</td>
-                          <td className="px-4 py-2 text-right">
+                        <tr key={batch.id} className={`border-b border-gray-100 ${isDirty ? 'bg-amber-50/60' : ''}`}>
+                          <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
+                          <td className="px-4 py-2.5 font-medium text-gray-900">{batch.lots?.name ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
+                          <td className="px-4 py-2.5 text-right">
                             <input
                               type="number"
                               step="0.01"
                               min="0"
                               value={getQty(batch)}
                               onChange={e => setQuantities(prev => ({ ...prev, [batch.id]: e.target.value }))}
-                              className="w-24 text-right rounded border border-gray-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className={`w-24 text-right rounded-md border px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 ${
+                                isDirty
+                                  ? 'border-amber-400 bg-amber-50 focus:ring-amber-400'
+                                  : 'border-gray-200 focus:ring-blue-500'
+                              }`}
                             />
                           </td>
-                          <td className="px-4 py-2 text-right">
+                          <td className="px-4 py-2.5 text-right">
                             <VarianceBadge variance={variance} />
                           </td>
                         </tr>
@@ -258,9 +273,9 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             </tbody>
             {batches.length > 0 && (
               <tfoot>
-                <tr className="border-t border-gray-200 bg-gray-50">
-                  <td colSpan={4} className="px-4 py-2 text-sm font-medium text-gray-500 text-right">Net variance</td>
-                  <td className="px-4 py-2 text-right">
+                <tr className="border-t-2 border-gray-200 bg-gray-50">
+                  <td colSpan={4} className="px-4 py-3 text-sm font-semibold text-gray-700 text-right">Net variance</td>
+                  <td className="px-4 py-3 text-right">
                     <VarianceBadge variance={netVariance} />
                   </td>
                 </tr>
@@ -271,10 +286,13 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
       </Card>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex gap-3">
+      <div className="flex items-center gap-4">
         <Button onClick={handleSubmit} disabled={submitting || isLoading}>
           {submitting ? 'Submitting…' : 'Submit for Approval'}
         </Button>
+        {changedCount > 0 && (
+          <p className="text-sm text-amber-600 font-medium">{changedCount} item{changedCount !== 1 ? 's' : ''} with variance</p>
+        )}
       </div>
     </div>
   )
