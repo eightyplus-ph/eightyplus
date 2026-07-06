@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Client { id: string; company_name: string }
+interface Client { id: string; company_name: string; withholding_tax_rate: string }
 interface Lot { id: string; name: string; price_per_kg: number | null }
 interface LocationStock { locationId: string; locationName: string; availableKg: number }
 interface LineItemState { uid: string; lotId: string; locationId: string; kg: string; pricePerKg: string }
@@ -48,7 +48,7 @@ interface Order {
   created_at: string
   payment_proof_url: string | null
   created_by: string | null
-  clients: { company_name: string } | null
+  clients: { company_name: string; withholding_tax_rate: string } | null
   profiles: { full_name: string } | null
   order_items: OrderItem[]
   dispatches: Dispatch[]
@@ -68,6 +68,9 @@ function totalKg(items: OrderItem[]) { return items.reduce((s, i) => s + parseFl
 function totalValue(items: OrderItem[]) { return items.reduce((s, i) => s + parseFloat(i.weight_ordered_kg ?? '0') * parseFloat(i.price_per_kg ?? '0'), 0) }
 function dispatchedKg(item: OrderItem) { return item.dispatch_items.reduce((s, d) => s + parseFloat(d.weight_dispatched_kg ?? '0'), 0) }
 function remainingKg(item: OrderItem) { return Math.max(0, parseFloat(item.weight_ordered_kg) - dispatchedKg(item)) }
+function whtAmount(gross: number, rate: number) { return gross * (rate / 100) }
+function netDue(gross: number, rate: number) { return gross - whtAmount(gross, rate) }
+const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 // ─── Confirm modal ────────────────────────────────────────────────────────────
 
@@ -80,7 +83,8 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
   const [error, setError] = useState('')
 
   const kg = totalKg(order.order_items)
-  const value = totalValue(order.order_items)
+  const gross = totalValue(order.order_items)
+  const whtRate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
 
   const handleConfirm = async () => {
     if (!file) return
@@ -105,9 +109,25 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
       <Card className="w-full max-w-md" onClick={e => e.stopPropagation()}>
         <CardHeader><CardTitle className="text-base">Confirm Order — {order.os_number}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm">
+          <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm space-y-1">
             <p className="font-medium text-gray-900">{order.clients?.company_name}</p>
-            <p className="text-gray-500 mt-0.5">{Math.round(kg)} kg · ₱{value.toLocaleString()}</p>
+            <p className="text-gray-500">{Math.round(kg)} kg</p>
+            <div className="pt-1 space-y-0.5">
+              <div className="flex justify-between text-gray-500">
+                <span>Gross Total</span>
+                <span className="tabular-nums">{peso(gross)}</span>
+              </div>
+              {whtRate > 0 && (
+                <div className="flex justify-between text-gray-400">
+                  <span>WHT ({whtRate}%)</span>
+                  <span className="tabular-nums text-red-400">− {peso(whtAmount(gross, whtRate))}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-semibold text-gray-900 pt-1 border-t border-gray-200">
+                <span>{whtRate > 0 ? 'Net Amount Due' : 'Total'}</span>
+                <span className="tabular-nums">{peso(whtRate > 0 ? netDue(gross, whtRate) : gross)}</span>
+              </div>
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label>Payment Confirmation *</Label>
@@ -157,7 +177,7 @@ export default function OrdersPage() {
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['clients-select'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('clients').select('id, company_name').eq('status', 'active').order('company_name')
+      const { data, error } = await supabase.from('clients').select('id, company_name, withholding_tax_rate').eq('status', 'active').order('company_name')
       if (error) throw error
       return data as Client[]
     },
@@ -199,7 +219,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name), profiles(full_name), order_items(id, lot_id, location_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name, withholding_tax_rate), profiles(full_name), order_items(id, lot_id, location_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]
@@ -357,6 +377,34 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              {/* WHT Summary */}
+              {(() => {
+                const selectedClient = clients.find(c => c.id === clientId)
+                const whtRate = parseFloat(selectedClient?.withholding_tax_rate ?? '0')
+                const gross = lineItems.reduce((s, l) => s + parseFloat(l.kg || '0') * parseFloat(l.pricePerKg || '0'), 0)
+                if (gross <= 0) return null
+                return (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+                    <div className="flex justify-between items-center text-gray-600">
+                      <span>Gross Total</span>
+                      <span className="font-medium tabular-nums">{peso(gross)}</span>
+                    </div>
+                    {whtRate > 0 && (
+                      <>
+                        <div className="flex justify-between items-center text-gray-500 mt-1">
+                          <span>WHT ({whtRate}%)</span>
+                          <span className="tabular-nums text-red-500">− {peso(whtAmount(gross, whtRate))}</span>
+                        </div>
+                        <div className="flex justify-between items-center font-semibold text-gray-900 mt-2 pt-2 border-t border-gray-200">
+                          <span>Net Amount Due</span>
+                          <span className="tabular-nums">{peso(netDue(gross, whtRate))}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              })()}
+
               <div className="space-y-1.5">
                 <Label>Notes <span className="text-gray-400 font-normal text-xs">optional</span></Label>
                 <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any notes…" />
@@ -422,7 +470,17 @@ export default function OrdersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right text-gray-900">{Math.round(kg)} kg</td>
-                      <td className="px-4 py-3 text-right text-gray-900">₱{value.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">
+                        {(() => {
+                          const rate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
+                          return (
+                            <>
+                              <p className="text-gray-900 tabular-nums">{peso(value)}</p>
+                              {rate > 0 && <p className="text-xs text-gray-400 tabular-nums">Net {peso(netDue(value, rate))}</p>}
+                            </>
+                          )
+                        })()}
+                      </td>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="flex gap-2 items-center">
                           {order.status === 'reserved' && (
@@ -478,6 +536,32 @@ export default function OrdersPage() {
                               })}
                             </tbody>
                           </table>
+
+                          {/* Financial summary */}
+                          {(() => {
+                            const gross = totalValue(order.order_items)
+                            const rate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
+                            return (
+                              <div className="flex justify-end mb-4">
+                                <div className="text-xs space-y-1 min-w-48">
+                                  <div className="flex justify-between gap-8 text-gray-500">
+                                    <span>Gross Total</span>
+                                    <span className="tabular-nums font-medium text-gray-700">{peso(gross)}</span>
+                                  </div>
+                                  {rate > 0 && (
+                                    <div className="flex justify-between gap-8 text-gray-400">
+                                      <span>WHT ({rate}%)</span>
+                                      <span className="tabular-nums text-red-400">− {peso(whtAmount(gross, rate))}</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between gap-8 font-semibold text-gray-900 pt-1 border-t border-gray-200">
+                                    <span>{rate > 0 ? 'Net Amount Due' : 'Total'}</span>
+                                    <span className="tabular-nums">{peso(rate > 0 ? netDue(gross, rate) : gross)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })()}
 
                           {/* Dispatch history */}
                           {order.dispatches.length > 0 && (
