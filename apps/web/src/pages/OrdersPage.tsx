@@ -259,7 +259,14 @@ export default function OrdersPage() {
     setFormError('')
     if (!clientId) { setFormError('Select a client.'); return }
     const validItems = lineItems.filter(l => l.lotId && l.locationId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0)
+    const incompleteItems = lineItems.filter(l => l.lotId && !(l.locationId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0))
     if (validItems.length === 0) { setFormError('Add at least one complete line item.'); return }
+    if (incompleteItems.length > 0) {
+      const names = incompleteItems.map(l => lots.find(lot => lot.id === l.lotId)?.name ?? 'Unknown').join(', ')
+      setFormError(`Some items are incomplete and would be dropped: ${names}. Fix or remove them before saving.`)
+      setSubmitting(false)
+      return
+    }
     setSubmitting(true)
 
     let finalOsNumber = osNumber.trim()
