@@ -11,18 +11,29 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 interface Client { id: string; company_name: string; withholding_tax_rate: string }
 interface Lot { id: string; name: string; price_per_kg: number | null }
-interface LocationStock { locationId: string; locationName: string; availableKg: number }
-interface LineItemState { uid: string; lotId: string; locationId: string; kg: string; pricePerKg: string }
+interface BatchOption {
+  batchId: string
+  batchNumber: string
+  locationId: string
+  locationName: string
+  availableKg: number
+  sacks: number | null
+  sackWeightKg: number | null
+  skuType: string
+}
+interface LineItemState { uid: string; lotId: string; batchId: string; kg: string; pricePerKg: string }
 
 interface DispatchItem { weight_dispatched_kg: string }
 interface OrderItem {
   id: string
   lot_id: string
   location_id: string | null
+  batch_id: string | null
   weight_ordered_kg: string
   price_per_kg: string
   lots: { name: string } | null
   locations: { name: string } | null
+  batches: { batch_number: string; sku_type: string | null; sack_weight_kg: string | null } | null
   dispatch_items: DispatchItem[]
 }
 interface DispatchLineItem {
@@ -166,7 +177,7 @@ export default function OrdersPage() {
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10))
   const [osNumber, setOsNumber] = useState('')
   const [notes, setNotes] = useState('')
-  const [lineItems, setLineItems] = useState<LineItemState[]>([{ uid: uid(), lotId: '', locationId: '', kg: '', pricePerKg: '' }])
+  const [lineItems, setLineItems] = useState<LineItemState[]>([{ uid: uid(), lotId: '', batchId: '', kg: '', pricePerKg: '' }])
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -192,25 +203,32 @@ export default function OrdersPage() {
     },
   })
 
-  const { data: stockByLot = {} } = useQuery<Record<string, LocationStock[]>>({
-    queryKey: ['stock-by-lot'],
+  const { data: batchesByLot = {} } = useQuery<Record<string, BatchOption[]>>({
+    queryKey: ['batches-by-lot'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('lot_id, location_id, weight_kg, locations(name)')
+        .select('id, batch_number, lot_id, location_id, weight_kg, sacks, sack_weight_kg, sku_type, locations(name)')
         .is('contract_item_id', null)
+        .gt('weight_kg', 0)
       if (error) throw error
-      const map: Record<string, Record<string, LocationStock>> = {}
+      const map: Record<string, BatchOption[]> = {}
       for (const b of data ?? []) {
         const lotId = b.lot_id as string
-        const locationId = b.location_id as string
         const locationName = (b.locations as unknown as { name: string } | null)?.name ?? 'Unknown'
-        const kg = parseFloat(b.weight_kg ?? '0')
-        if (!map[lotId]) map[lotId] = {}
-        if (!map[lotId][locationId]) map[lotId][locationId] = { locationId, locationName, availableKg: 0 }
-        map[lotId][locationId].availableKg += kg
+        if (!map[lotId]) map[lotId] = []
+        map[lotId].push({
+          batchId: b.id as string,
+          batchNumber: b.batch_number as string,
+          locationId: b.location_id as string,
+          locationName,
+          availableKg: parseFloat(b.weight_kg ?? '0'),
+          sacks: b.sacks ? parseInt(String(b.sacks)) : null,
+          sackWeightKg: b.sack_weight_kg ? parseFloat(String(b.sack_weight_kg)) : null,
+          skuType: (b.sku_type as string) ?? 'commercial',
+        })
       }
-      return Object.fromEntries(Object.entries(map).map(([k, v]) => [k, Object.values(v)]))
+      return map
     },
   })
 
@@ -219,7 +237,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name, withholding_tax_rate), profiles(full_name), order_items(id, lot_id, location_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name, withholding_tax_rate), profiles(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]
@@ -235,14 +253,14 @@ export default function OrdersPage() {
       )
     : orders
 
-  const addLine = () => setLineItems(prev => [...prev, { uid: uid(), lotId: '', locationId: '', kg: '', pricePerKg: '' }])
+  const addLine = () => setLineItems(prev => [...prev, { uid: uid(), lotId: '', batchId: '', kg: '', pricePerKg: '' }])
   const removeLine = (id: string) => setLineItems(prev => prev.filter(l => l.uid !== id))
   const updateLine = (id: string, field: keyof Omit<LineItemState, 'uid'>, value: string) =>
     setLineItems(prev => prev.map(l => l.uid === id ? { ...l, [field]: value } : l))
   const updateLot = (lineUid: string, lotId: string) => {
     const lot = lots.find(l => l.id === lotId)
     setLineItems(prev => prev.map(l => l.uid === lineUid
-      ? { ...l, lotId, locationId: '', pricePerKg: lot?.price_per_kg != null ? String(lot.price_per_kg) : l.pricePerKg }
+      ? { ...l, lotId, batchId: '', pricePerKg: lot?.price_per_kg != null ? String(lot.price_per_kg) : l.pricePerKg }
       : l
     ))
   }
@@ -250,7 +268,7 @@ export default function OrdersPage() {
   const resetForm = () => {
     setClientId(''); setOrderDate(new Date().toISOString().slice(0, 10))
     setOsNumber(''); setNotes('')
-    setLineItems([{ uid: uid(), lotId: '', locationId: '', kg: '', pricePerKg: '' }])
+    setLineItems([{ uid: uid(), lotId: '', batchId: '', kg: '', pricePerKg: '' }])
     setFormError(''); setShowForm(false)
   }
 
@@ -258,8 +276,8 @@ export default function OrdersPage() {
     e.preventDefault()
     setFormError('')
     if (!clientId) { setFormError('Select a client.'); return }
-    const validItems = lineItems.filter(l => l.lotId && l.locationId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0)
-    const incompleteItems = lineItems.filter(l => l.lotId && !(l.locationId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0))
+    const validItems = lineItems.filter(l => l.lotId && l.batchId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0)
+    const incompleteItems = lineItems.filter(l => l.lotId && !(l.batchId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0))
     if (validItems.length === 0) { setFormError('Add at least one complete line item.'); return }
     if (incompleteItems.length > 0) {
       const names = incompleteItems.map(l => lots.find(lot => lot.id === l.lotId)?.name ?? 'Unknown').join(', ')
@@ -286,11 +304,22 @@ export default function OrdersPage() {
     if (orderErr) { setFormError(orderErr.message); setSubmitting(false); return }
 
     const { error: itemsErr } = await supabase.from('order_items').insert(
-      validItems.map(l => ({ order_id: orderData[0].id, lot_id: l.lotId, location_id: l.locationId, weight_ordered_kg: parseFloat(l.kg), price_per_kg: parseFloat(l.pricePerKg) }))
+      validItems.map(l => {
+        const batch = (batchesByLot[l.lotId] ?? []).find(b => b.batchId === l.batchId)
+        return {
+          order_id: orderData[0].id,
+          lot_id: l.lotId,
+          location_id: batch?.locationId ?? null,
+          batch_id: l.batchId,
+          weight_ordered_kg: parseFloat(l.kg),
+          price_per_kg: parseFloat(l.pricePerKg),
+        }
+      })
     )
     if (itemsErr) { setFormError(itemsErr.message); setSubmitting(false); return }
 
     await queryClient.invalidateQueries({ queryKey: ['orders'] })
+    await queryClient.invalidateQueries({ queryKey: ['batches-by-lot'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     resetForm(); setSubmitting(false)
   }
@@ -346,7 +375,7 @@ export default function OrdersPage() {
                 <div className="space-y-2">
                   {lineItems.map((line, idx) => {
                     const lineTotal = parseFloat(line.kg || '0') * parseFloat(line.pricePerKg || '0')
-                    const locationOptions = line.lotId ? (stockByLot[line.lotId] ?? []) : []
+                    const batchOptions = line.lotId ? (batchesByLot[line.lotId] ?? []) : []
                     return (
                       <div key={line.uid} className="grid grid-cols-12 gap-2 items-center">
                         <div className="col-span-4">
@@ -356,11 +385,16 @@ export default function OrdersPage() {
                           </select>
                         </div>
                         <div className="col-span-3">
-                          <select value={line.locationId} onChange={e => updateLine(line.uid, 'locationId', e.target.value)} disabled={!line.lotId} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-40">
-                            <option value="">Location…</option>
-                            {locationOptions.map(loc => (
-                              <option key={loc.locationId} value={loc.locationId}>{loc.locationName} ({Math.round(loc.availableKg)} kg)</option>
-                            ))}
+                          <select value={line.batchId} onChange={e => updateLine(line.uid, 'batchId', e.target.value)} disabled={!line.lotId} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-40">
+                            <option value="">Batch…</option>
+                            {batchOptions.map(b => {
+                              const skuLabel = b.skuType === 'retail_1kg' ? '1 kg bag' : (b.sackWeightKg ? `${b.sackWeightKg} kg/sk` : 'sack')
+                              return (
+                                <option key={b.batchId} value={b.batchId}>
+                                  {b.locationName} · {skuLabel} · {Math.round(b.availableKg)} kg
+                                </option>
+                              )
+                            })}
                           </select>
                         </div>
                         <div className="col-span-2"><Input type="number" min="0" placeholder="kg" value={line.kg} onChange={e => updateLine(line.uid, 'kg', e.target.value)} /></div>
@@ -377,7 +411,7 @@ export default function OrdersPage() {
                 </div>
                 <div className="grid grid-cols-12 gap-2 mt-1 text-xs text-gray-400 px-0.5">
                   <div className="col-span-4">Product</div>
-                  <div className="col-span-3">Location</div>
+                  <div className="col-span-3">Batch / Stock</div>
                   <div className="col-span-2">Weight (kg)</div>
                   <div className="col-span-2">Price (₱/kg)</div>
                   <div className="col-span-1 text-right">Subtotal</div>
@@ -517,7 +551,7 @@ export default function OrdersPage() {
                             <thead>
                               <tr className="text-gray-400">
                                 <th className="text-left pb-1 font-medium">Product</th>
-                                <th className="text-left pb-1 font-medium">Location</th>
+                                <th className="text-left pb-1 font-medium">Batch / Location</th>
                                 <th className="text-right pb-1 font-medium">Ordered</th>
                                 <th className="text-right pb-1 font-medium">Dispatched</th>
                                 <th className="text-right pb-1 font-medium">Remaining</th>
@@ -529,10 +563,16 @@ export default function OrdersPage() {
                               {order.order_items.map(item => {
                                 const rem = remainingKg(item)
                                 const dis = dispatchedKg(item)
+                                const batchCell = item.batches
+                                  ? (() => {
+                                      const skuLabel = item.batches.sku_type === 'retail_1kg' ? '1 kg bag' : 'sack'
+                                      return `${item.batches.batch_number} · ${skuLabel} · ${item.locations?.name ?? ''}`
+                                    })()
+                                  : (item.locations?.name ?? null)
                                 return (
                                   <tr key={item.id} className="border-t border-gray-100">
                                     <td className="py-1.5 text-gray-700">{item.lots?.name ?? '—'}</td>
-                                    <td className="py-1.5 text-xs text-gray-500">{item.locations?.name ?? <span className="text-amber-500">Untagged</span>}</td>
+                                    <td className="py-1.5 text-xs text-gray-500">{batchCell ?? <span className="text-amber-500">Untagged</span>}</td>
                                     <td className="py-1.5 text-right text-gray-700">{Math.round(parseFloat(item.weight_ordered_kg))} kg</td>
                                     <td className="py-1.5 text-right text-gray-600">{Math.round(dis)} kg</td>
                                     <td className={`py-1.5 text-right font-medium ${rem > 0 ? 'text-amber-600' : 'text-green-600'}`}>{rem > 0 ? `${Math.round(rem)} kg` : '✓ Done'}</td>

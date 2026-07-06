@@ -18,6 +18,7 @@ interface Location { id: string; name: string }
 interface LocationRow {
   id: string
   locationId: string
+  skuType: string
   sacks: string
   perSack: string
   weightKg: string
@@ -30,6 +31,7 @@ function newLocationRow(): LocationRow {
   return {
     id: crypto.randomUUID(),
     locationId: '',
+    skuType: 'commercial',
     sacks: '',
     perSack: '',
     weightKg: '',
@@ -201,6 +203,8 @@ export default function ReceivingPage() {
           lot_id: lotId,
           weight_kg: parseFloat(row.weightKg),
           sacks: parseInt(row.sacks),
+          sack_weight_kg: parseFloat(row.perSack) || null,
+          sku_type: row.skuType,
           location_id: row.locationId,
           received_at: row.receivedDate,
           source_reference: row.sourceRef.trim() || null,
@@ -384,6 +388,21 @@ export default function ReceivingPage() {
                   <div className="space-y-1.5">
                     <Label>Received Date</Label>
                     <Input type="date" value={row.receivedDate} onChange={e => updateRow(row.id, 'receivedDate', e.target.value)} />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>SKU Type</Label>
+                  <div className="flex gap-2">
+                    {([['commercial', 'Commercial sack'], ['retail_1kg', '1 kg retail']] as [string, string][]).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => updateRow(row.id, 'skuType', val)}
+                        className={`flex-1 py-1.5 text-xs font-medium rounded-md border transition-colors ${row.skuType === val ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">

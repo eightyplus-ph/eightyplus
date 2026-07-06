@@ -31,6 +31,8 @@ export const batches = pgTable('batches', {
   lot_id: uuid('lot_id').references(() => lots.id).notNull(),
   weight_kg: numeric('weight_kg', { precision: 10, scale: 2 }).notNull(),
   sacks: integer('sacks'),
+  sack_weight_kg: numeric('sack_weight_kg', { precision: 10, scale: 3 }),
+  sku_type: text('sku_type').notNull().default('commercial'), // 'commercial' | 'retail_1kg'
   status: text('status').notNull().default('qc_pending'),
   location: text('location'),           // legacy text — kept for existing rows
   location_id: uuid('location_id').references(() => locations.id),
@@ -120,6 +122,7 @@ export const orderItems = pgTable('order_items', {
   order_id: uuid('order_id').references(() => orders.id).notNull(),
   lot_id: uuid('lot_id').references(() => lots.id).notNull(),
   location_id: uuid('location_id').references(() => locations.id),
+  batch_id: uuid('batch_id').references(() => batches.id),
   weight_ordered_kg: numeric('weight_ordered_kg', { precision: 10, scale: 2 }).notNull(),
   price_per_kg: numeric('price_per_kg', { precision: 10, scale: 2 }).notNull(),
 })
