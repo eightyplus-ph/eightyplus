@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useProfile, canViewOrders, type Profile } from '@/lib/profile'
+import { useProfile, canViewOrders, canViewClients, type Profile } from '@/lib/profile'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
@@ -13,7 +13,7 @@ const ALL_NAV: NavLink[] = [
   { label: 'Transfers',     href: '/transfers',  roles: ['admin', 'ops'] },
   { label: 'Product Names', href: '/lots' },
   { label: 'Locations',     href: '/locations',  roles: ['admin', 'ops', 'manager'] },
-  { label: 'Clients',       href: '/clients',    roles: ['admin', 'manager', 'sales'] },
+  { label: 'Clients',       href: '/clients',    roles: ['admin', 'manager', 'sales'], checkFn: canViewClients },
   { label: 'Orders',        href: '/orders',     roles: ['admin', 'manager', 'sales'], checkFn: canViewOrders },
   { label: 'Dispatches',    href: '/dispatches', roles: ['admin', 'ops', 'sales'] },
   { label: 'Contracts',     href: '/contracts',  roles: ['admin', 'manager', 'sales'] },

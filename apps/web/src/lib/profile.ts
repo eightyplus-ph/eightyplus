@@ -10,6 +10,7 @@ export interface Profile {
   can_create_dispatches: boolean
   can_manage_contracts: boolean
   can_view_orders: boolean
+  can_view_clients: boolean
 }
 
 export function useProfile() {
@@ -20,7 +21,7 @@ export function useProfile() {
       if (!user) return null
       const { data } = await supabase
         .from('profiles')
-        .select('id, full_name, role, can_create_dispatches, can_manage_contracts, can_view_orders')
+        .select('id, full_name, role, can_create_dispatches, can_manage_contracts, can_view_orders, can_view_clients')
         .eq('id', user.id)
         .single()
       return (data as Profile) ?? null
@@ -52,4 +53,9 @@ export function canSeeFinancials(p: Profile | null | undefined): boolean {
 export function canViewOrders(p: Profile | null | undefined): boolean {
   if (!p) return false
   return p.role === 'admin' || p.role === 'manager' || p.role === 'sales' || p.can_view_orders
+}
+
+export function canViewClients(p: Profile | null | undefined): boolean {
+  if (!p) return false
+  return p.role === 'admin' || p.role === 'manager' || p.role === 'sales' || p.can_view_clients
 }
