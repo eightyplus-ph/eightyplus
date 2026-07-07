@@ -19,11 +19,15 @@ export function useProfile() {
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return null
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('id, full_name, role, can_create_dispatches, can_manage_contracts, can_view_orders, can_view_clients')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
+      // Surface real failures (e.g. a missing column → 400) instead of silently
+      // returning null, which would quietly downgrade every user to the rep view.
+      // maybeSingle keeps a genuinely-absent row graceful (null, no throw).
+      if (error) throw error
       return (data as Profile) ?? null
     },
     staleTime: 5 * 60 * 1000,
