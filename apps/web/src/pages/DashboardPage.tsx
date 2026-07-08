@@ -29,12 +29,17 @@ interface ProductRow {
   locations: LocationBreakdown[]
 }
 
+function fmtKg(kg: number): string {
+  if (kg >= 1000) return `${(kg / 1000).toFixed(1)} t`
+  return `${Math.round(kg).toLocaleString()} kg`
+}
+
 function StatCell({ kg, sacks, bySku }: { kg: number; sacks: number; bySku?: Record<string, number> }) {
   const sub = bySku ? formatUnitsBySku(bySku) : `${sacks} sacks`
   return (
-    <td className="px-4 py-3 text-right">
-      <p className="text-gray-900 font-medium">{Math.round(kg)}</p>
-      <p className="text-gray-400 text-xs">{sub}</p>
+    <td className="px-4 py-4 text-right align-top">
+      <p className="font-semibold text-gray-900 tabular-nums">{fmtKg(kg)}</p>
+      <p className="text-gray-400 text-xs tabular-nums mt-0.5">{sub}</p>
     </td>
   )
 }
@@ -42,16 +47,16 @@ function StatCell({ kg, sacks, bySku }: { kg: number; sacks: number; bySku?: Rec
 function StatCellSub({ kg, sacks, skuType }: { kg: number; sacks: number; skuType?: string }) {
   const unitLabel = skuUnit(skuType)
   return (
-    <td className="px-4 py-2 text-right">
-      <p className="text-gray-600 text-xs">{Math.round(kg)} kg</p>
-      <p className="text-gray-400 text-xs">{sacks} {unitLabel}</p>
+    <td className="px-4 py-2 text-right align-top">
+      <p className="font-medium text-gray-700 text-xs tabular-nums">{fmtKg(kg)}</p>
+      <p className="text-gray-400 text-xs tabular-nums mt-0.5">{sacks} {unitLabel}</p>
     </td>
   )
 }
 
 function CountCell({ count }: { count: number }) {
   return (
-    <td className="px-4 py-3 text-center">
+    <td className="px-4 py-4 text-center align-top">
       {count > 0
         ? <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold">{count}</span>
         : <span className="text-gray-300 text-xs">—</span>}
@@ -304,19 +309,30 @@ export default function DashboardPage() {
       )}
 
       {canSeeInventory && <Card>
-        <div className="px-4 py-3 border-b border-gray-100">
-          <p className="text-sm font-medium text-gray-700">Product Overview</p>
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <p className="text-sm font-semibold text-gray-900">Product Overview</p>
+          {rows.length > 0 && (
+            <button
+              onClick={() => {
+                const allOpen = rows.every(r => expanded.has(r.lotId))
+                setExpanded(allOpen ? new Set() : new Set(rows.map(r => r.lotId)))
+              }}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              {rows.every(r => expanded.has(r.lotId)) ? 'Collapse all' : 'Expand all'}
+            </button>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">In Stock</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Reserved</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Available</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-500">Orders</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-500">Dispatch</th>
+              <tr className="border-b border-gray-100 bg-gray-50/60">
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-32">In stock</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-32">Reserved</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-32">Available</th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-24">Orders</th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-24">Dispatch</th>
               </tr>
             </thead>
             <tbody>
@@ -328,20 +344,30 @@ export default function DashboardPage() {
               )}
               {rows.map(row => {
                 const isExpanded = expanded.has(row.lotId)
-                const hasBreakdown = row.locations.length > 1
+                const uniqueLocations = [...new Set(row.locations.map(l => l.locationName))]
+                const uniqueSkus = [...new Set(row.locations.map(l => l.skuType))]
                 return (
                   <>
                     <tr
                       key={row.lotId}
-                      onClick={() => hasBreakdown && toggleExpand(row.lotId)}
-                      className={`border-b border-gray-100 ${hasBreakdown ? 'cursor-pointer hover:bg-gray-50' : ''} ${isExpanded ? 'bg-gray-50' : ''}`}
+                      onClick={() => toggleExpand(row.lotId)}
+                      className={`border-b border-gray-100 cursor-pointer transition-colors ${isExpanded ? 'bg-gray-50/60' : 'hover:bg-gray-50/60'}`}
                     >
-                      <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
-                        <div className="flex items-center gap-2">
-                          {hasBreakdown && (
-                            <span className="text-gray-400 text-xs select-none shrink-0">{isExpanded ? '▾' : '▸'}</span>
-                          )}
-                          <span className="truncate" title={row.name}>{row.name}</span>
+                      <td className="px-4 py-4 align-top">
+                        <div className="flex items-start gap-3">
+                          <span className={`text-gray-400 text-xs mt-1 transition-transform duration-150 shrink-0 ${isExpanded ? 'rotate-90' : ''} inline-block`}>▶</span>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-900 leading-snug">{row.name}</p>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              {uniqueLocations.map(l => (
+                                <span key={l} className="text-xs text-gray-400">{l}</span>
+                              ))}
+                              {uniqueLocations.length > 0 && uniqueSkus.length > 0 && <span className="text-gray-200 text-xs">·</span>}
+                              {uniqueSkus.map(s => (
+                                <span key={s} className="text-xs text-gray-400">{s === 'retail_1kg' ? '1 kg bags' : 'Commercial'}</span>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <StatCell kg={row.inStockKg} sacks={row.inStockSacks} bySku={row.inStockBySku} />
@@ -351,11 +377,14 @@ export default function DashboardPage() {
                       <CountCell count={row.dispatchCount} />
                     </tr>
                     {isExpanded && row.locations.map(loc => {
-                      const skuLabel = loc.skuType === 'retail_1kg' ? '1 kg bag' : (loc.sackWeightKg ? `${loc.sackWeightKg} kg/sk` : 'commercial')
+                      const skuLabel = loc.skuType === 'retail_1kg' ? '1 kg bags' : (loc.sackWeightKg ? `${loc.sackWeightKg} kg/sk` : 'commercial')
                       return (
-                        <tr key={`${row.lotId}-${loc.locationId}-${loc.skuType}-${loc.sackWeightKg}`} className="border-b border-gray-100 bg-gray-50/70">
-                          <td className="pl-10 pr-4 py-2 text-gray-500 text-xs">
-                            {loc.locationName} <span className="text-gray-400">· {skuLabel}</span>
+                        <tr key={`${row.lotId}-${loc.locationId}-${loc.skuType}-${loc.sackWeightKg}`} className="border-b border-gray-100 bg-gray-50/40">
+                          <td className="pl-12 pr-4 py-2.5 align-top">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-gray-200 text-xs text-gray-600 font-medium">{loc.locationName}</span>
+                              <span className={`text-xs font-medium ${loc.skuType === 'retail_1kg' ? 'text-purple-600' : 'text-gray-400'}`}>{skuLabel}</span>
+                            </div>
                           </td>
                           <StatCellSub kg={loc.kg} sacks={loc.sacks} skuType={loc.skuType} />
                           <td colSpan={4} />
