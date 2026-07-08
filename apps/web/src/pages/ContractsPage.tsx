@@ -21,6 +21,16 @@ interface ContractItem {
   notes: string | null
 }
 
+interface ContractOrder {
+  id: string
+  os_number: string
+  order_date: string
+  status: string
+  scheduled_dispatch_date: string | null
+  order_items: { weight_ordered_kg: string; lots: { name: string } | null }[]
+  dispatches: { dispatched_date: string }[]
+}
+
 interface ContractRow {
   id: string
   contract_number: string
@@ -298,11 +308,38 @@ function ContractForm({
   )
 }
 
+const ORDER_STATUS_COLORS: Record<string, string> = {
+  draft:      'bg-gray-100 text-gray-500',
+  reserved:   'bg-yellow-100 text-yellow-700',
+  confirmed:  'bg-blue-100 text-blue-700',
+  dispatched: 'bg-green-100 text-green-700',
+  cancelled:  'bg-red-100 text-red-500',
+}
+
+function fmt(d: string) {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en', { month: 'short', day: 'numeric', year: '2-digit' })
+}
+
 // ─── Contract expanded detail ──────────────────────────────────────────────────
 
 function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPrice: boolean }) {
   const items = contract.contract_items ?? []
-  if (items.length === 0) return (
+
+  // Fetch orders linked to this contract
+  const { data: orders = [] } = useQuery<ContractOrder[]>({
+    queryKey: ['contract-orders', contract.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('id, os_number, order_date, status, scheduled_dispatch_date, order_items(weight_ordered_kg, lots(name)), dispatches(dispatched_date)')
+        .eq('contract_id', contract.id)
+        .order('order_date')
+      if (error) throw error
+      return data as ContractOrder[]
+    },
+  })
+
+  if (items.length === 0 && orders.length === 0) return (
     <div className="px-6 py-4 text-sm text-gray-400 bg-gray-50 border-b border-gray-200">
       No product lines yet.
     </div>
@@ -313,56 +350,137 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
   items.forEach(i => Object.keys(i.monthly_schedule ?? {}).forEach(m => monthSet.add(m)))
   const months = [...monthSet].sort()
 
+  // Total contracted kg
+  const totalContracted = items.reduce((s, i) =>
+    s + months.reduce((ms, m) => ms + (i.monthly_schedule?.[m] ?? 0), 0), 0)
+
+  // Total ordered kg across all orders
+  const totalOrdered = orders.reduce((s, o) =>
+    s + o.order_items.reduce((os, oi) => os + parseFloat(oi.weight_ordered_kg), 0), 0)
+
   return (
-    <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-        <table className="text-sm min-w-full">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-3 py-2 font-medium text-gray-500">Product</th>
-              {showPrice && <th className="text-right px-3 py-2 font-medium text-gray-500">₱/kg</th>}
-              {months.map(m => (
-                <th key={m} className="text-right px-3 py-2 font-medium text-gray-500 text-xs">{monthLabel(m)}</th>
-              ))}
-              <th className="text-right px-3 py-2 font-medium text-gray-500">Total kg</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map(item => {
-              const total = months.reduce((s, m) => s + (item.monthly_schedule?.[m] ?? 0), 0)
-              const totalValue = total * parseFloat(item.price_per_kg)
-              return (
-                <tr key={item.id} className="border-b border-gray-100">
-                  <td className="px-3 py-2 font-medium text-gray-900">{item.product_name}</td>
-                  {showPrice && <td className="px-3 py-2 text-right text-gray-600">₱{parseFloat(item.price_per_kg).toLocaleString()}</td>}
-                  {months.map(m => {
-                    const kg = item.monthly_schedule?.[m] ?? 0
-                    return <td key={m} className="px-3 py-2 text-right text-gray-700">{kg > 0 ? kg.toLocaleString() : <span className="text-gray-300">—</span>}</td>
-                  })}
-                  <td className="px-3 py-2 text-right">
-                    <p className="font-semibold text-gray-900">{total.toLocaleString()} kg</p>
-                    {showPrice && <p className="text-xs text-gray-400">₱{Math.round(totalValue).toLocaleString()}</p>}
-                  </td>
+    <div className="bg-gray-50 border-b border-gray-200 divide-y divide-gray-200">
+      {/* Monthly schedule */}
+      {items.length > 0 && (
+        <div className="px-6 py-4">
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+            <table className="text-sm min-w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Product</th>
+                  {showPrice && <th className="text-right px-3 py-2 font-medium text-gray-500">₱/kg</th>}
+                  {months.map(m => (
+                    <th key={m} className="text-right px-3 py-2 font-medium text-gray-500 text-xs">{monthLabel(m)}</th>
+                  ))}
+                  <th className="text-right px-3 py-2 font-medium text-gray-500">Total kg</th>
                 </tr>
-              )
-            })}
-          </tbody>
-          {items.length > 1 && months.length > 0 && (
-            <tfoot>
-              <tr className="bg-gray-50 border-t border-gray-200">
-                <td className="px-3 py-2 text-xs text-gray-400 font-medium">Total</td>
-                {showPrice && <td />}
-                {months.map(m => {
-                  const t = items.reduce((s, i) => s + (i.monthly_schedule?.[m] ?? 0), 0)
-                  return <td key={m} className="px-3 py-2 text-right text-xs font-medium text-gray-700">{t > 0 ? t.toLocaleString() : <span className="text-gray-300">—</span>}</td>
+              </thead>
+              <tbody>
+                {items.map(item => {
+                  const total = months.reduce((s, m) => s + (item.monthly_schedule?.[m] ?? 0), 0)
+                  const totalValue = total * parseFloat(item.price_per_kg)
+                  return (
+                    <tr key={item.id} className="border-b border-gray-100">
+                      <td className="px-3 py-2 font-medium text-gray-900">{item.product_name}</td>
+                      {showPrice && <td className="px-3 py-2 text-right text-gray-600">₱{parseFloat(item.price_per_kg).toLocaleString()}</td>}
+                      {months.map(m => {
+                        const kg = item.monthly_schedule?.[m] ?? 0
+                        return <td key={m} className="px-3 py-2 text-right text-gray-700">{kg > 0 ? kg.toLocaleString() : <span className="text-gray-300">—</span>}</td>
+                      })}
+                      <td className="px-3 py-2 text-right">
+                        <p className="font-semibold text-gray-900">{total.toLocaleString()} kg</p>
+                        {showPrice && <p className="text-xs text-gray-400">₱{Math.round(totalValue).toLocaleString()}</p>}
+                      </td>
+                    </tr>
+                  )
                 })}
-                <td className="px-3 py-2 text-right text-xs font-semibold text-gray-800">
-                  {items.reduce((s, i) => s + months.reduce((ms, m) => ms + (i.monthly_schedule?.[m] ?? 0), 0), 0).toLocaleString()} kg
-                </td>
-              </tr>
-            </tfoot>
+              </tbody>
+              {items.length > 1 && months.length > 0 && (
+                <tfoot>
+                  <tr className="bg-gray-50 border-t border-gray-200">
+                    <td className="px-3 py-2 text-xs text-gray-400 font-medium">Total</td>
+                    {showPrice && <td />}
+                    {months.map(m => {
+                      const t = items.reduce((s, i) => s + (i.monthly_schedule?.[m] ?? 0), 0)
+                      return <td key={m} className="px-3 py-2 text-right text-xs font-medium text-gray-700">{t > 0 ? t.toLocaleString() : <span className="text-gray-300">—</span>}</td>
+                    })}
+                    <td className="px-3 py-2 text-right text-xs font-semibold text-gray-800">
+                      {totalContracted.toLocaleString()} kg
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Orders against this contract */}
+      <div className="px-6 py-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Orders Against This Contract</p>
+          {totalContracted > 0 && (
+            <p className="text-xs text-gray-500">
+              <span className="font-medium text-gray-900">{totalOrdered.toLocaleString()} kg</span> ordered of {totalContracted.toLocaleString()} kg contracted
+              {totalOrdered < totalContracted && (
+                <span className="text-orange-600 ml-1">· {(totalContracted - totalOrdered).toLocaleString()} kg remaining</span>
+              )}
+            </p>
           )}
-        </table>
+        </div>
+
+        {orders.length === 0 ? (
+          <p className="text-xs text-gray-400 italic">No orders linked yet.</p>
+        ) : (
+          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            <table className="text-sm min-w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Order</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Products</th>
+                  <th className="text-right px-3 py-2 font-medium text-gray-500">Weight</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Status</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Sched. Dispatch</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-500">Actual Dispatch</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map(o => {
+                  const weightKg = o.order_items.reduce((s, oi) => s + parseFloat(oi.weight_ordered_kg), 0)
+                  const products = [...new Set(o.order_items.map(oi => oi.lots?.name ?? '—').filter(Boolean))]
+                  const dispatched = o.dispatches.length > 0
+                    ? o.dispatches.map(d => fmt(d.dispatched_date)).join(', ')
+                    : null
+                  return (
+                    <tr key={o.id} className="border-b border-gray-100 last:border-0">
+                      <td className="px-3 py-2">
+                        <p className="font-mono text-xs font-medium text-gray-900">{o.os_number}</p>
+                        <p className="text-xs text-gray-400">{fmt(o.order_date)}</p>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-700 max-w-[200px]">
+                        {products.join(', ') || '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-gray-900 text-xs">
+                        {weightKg.toLocaleString()} kg
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ORDER_STATUS_COLORS[o.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                          {o.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-600">
+                        {o.scheduled_dispatch_date ? fmt(o.scheduled_dispatch_date) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-600">
+                        {dispatched ?? <span className="text-gray-300">—</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )
