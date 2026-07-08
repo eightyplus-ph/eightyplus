@@ -15,6 +15,7 @@ interface Batch {
   batch_number: string
   weight_kg: string
   sacks: number | null
+  sack_weight_kg: string | null
   sku_type: string | null
   lot_id: string | null
   location: string | null
@@ -49,6 +50,7 @@ export default function InventoryPage() {
   const [locationFilter, setLocationFilter] = useState<LocationFilter>('all')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSacks, setEditSacks] = useState('')
+  const [editSackWeight, setEditSackWeight] = useState('')
   const [editWeight, setEditWeight] = useState('')
   const [editDate, setEditDate] = useState('')
   const [editSaving, setEditSaving] = useState(false)
@@ -58,7 +60,7 @@ export default function InventoryPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, weight_kg, sacks, sku_type, lot_id, location, received_at, contract_item_id, lots(name), locations(name), contract_items(product_name, contracts(contract_number, title))')
+        .select('id, batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lot_id, location, received_at, contract_item_id, lots(name), locations(name), contract_items(product_name, contracts(contract_number, title))')
         .order('received_at', { ascending: false })
       if (error) throw error
       return data as unknown as Batch[]
@@ -68,6 +70,7 @@ export default function InventoryPage() {
   const startEdit = (batch: Batch) => {
     setEditingId(batch.id)
     setEditSacks(String(batch.sacks ?? ''))
+    setEditSackWeight(batch.sack_weight_kg ?? '')
     setEditWeight(batch.weight_kg)
     setEditDate(batch.received_at.slice(0, 10))
   }
@@ -75,9 +78,10 @@ export default function InventoryPage() {
   const saveEdit = async (id: string) => {
     setEditSaving(true)
     await supabase.from('batches').update({
-      sacks: parseInt(editSacks),
-      weight_kg: parseFloat(editWeight),
-      received_at: editDate,
+      sacks:          parseInt(editSacks) || null,
+      sack_weight_kg: parseFloat(editSackWeight) || null,
+      weight_kg:      parseFloat(editWeight),
+      received_at:    editDate,
     }).eq('id', id)
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
@@ -200,6 +204,13 @@ export default function InventoryPage() {
                             <div className="flex gap-1.5 items-center justify-end">
                               <input type="number" value={editSacks} onChange={e => setEditSacks(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder={skuUnit(batch.sku_type)} />
                               <span className="text-gray-400 text-xs">{skuUnit(batch.sku_type)}</span>
+                              {batch.sku_type !== 'retail_1kg' && (
+                                <>
+                                  <span className="text-gray-300 text-xs">×</span>
+                                  <input type="number" value={editSackWeight} onChange={e => setEditSackWeight(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="kg/sk" />
+                                  <span className="text-gray-300 text-xs">kg/sk</span>
+                                </>
+                              )}
                               <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)} className="w-20 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="kg" />
                               <span className="text-gray-400 text-xs">kg</span>
                             </div>
@@ -216,7 +227,14 @@ export default function InventoryPage() {
                         <>
                           <td className="px-4 py-3 text-right">
                             <span className="font-semibold text-gray-900 tabular-nums">{Math.round(parseFloat(batch.weight_kg)).toLocaleString()} kg</span>
-                            {batch.sacks ? <span className="text-gray-400 text-xs ml-1.5">{batch.sacks} {skuUnit(batch.sku_type)}</span> : null}
+                            {batch.sacks != null && (
+                              <div className="text-gray-400 text-xs tabular-nums mt-0.5">
+                                {batch.sacks} {skuUnit(batch.sku_type)}
+                                {batch.sack_weight_kg && (
+                                  <span className="text-gray-300"> × {parseFloat(batch.sack_weight_kg).toFixed(1)} kg</span>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-gray-500 text-xs">
                             {new Date(batch.received_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
