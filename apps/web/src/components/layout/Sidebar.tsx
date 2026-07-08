@@ -1,22 +1,29 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useProfile, canViewOrders, canViewClients, type Profile } from '@/lib/profile'
+import { useProfile, type Profile } from '@/lib/profile'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-interface NavLink { label: string; href: string; roles?: string[]; checkFn?: (p: Profile | null) => boolean }
+interface NavLink {
+  label: string
+  href: string
+  moduleKey: string
+  defaultRoles?: string[]
+  checkFn?: (p: Profile | null) => boolean
+}
 
 const ALL_NAV: NavLink[] = [
-  { label: 'Dashboard',     href: '/' },
-  { label: 'Inventory',     href: '/inventory' },
-  { label: 'Receiving',     href: '/receiving',  roles: ['admin', 'ops'] },
-  { label: 'Transfers',     href: '/transfers',  roles: ['admin', 'ops'] },
-  { label: 'Product Names', href: '/lots' },
-  { label: 'Locations',     href: '/locations',  roles: ['admin', 'ops', 'manager'] },
-  { label: 'Clients',       href: '/clients',    roles: ['admin', 'manager', 'sales'], checkFn: canViewClients },
-  { label: 'Orders',        href: '/orders',     roles: ['admin', 'manager', 'sales'], checkFn: canViewOrders },
-  { label: 'Dispatches',    href: '/dispatches', roles: ['admin', 'ops', 'sales'] },
-  { label: 'Contracts',     href: '/contracts',  roles: ['admin', 'manager', 'sales'] },
+  { label: 'Dashboard',     href: '/',           moduleKey: 'dashboard' },
+  { label: 'Inventory',     href: '/inventory',  moduleKey: 'inventory' },
+  { label: 'Receiving',     href: '/receiving',  moduleKey: 'receiving',  defaultRoles: ['admin', 'ops'] },
+  { label: 'Transfers',     href: '/transfers',  moduleKey: 'transfers',  defaultRoles: ['admin', 'ops'] },
+  { label: 'Product Names', href: '/lots',       moduleKey: 'lots' },
+  { label: 'Locations',     href: '/locations',  moduleKey: 'locations',  defaultRoles: ['admin', 'ops', 'manager'] },
+  { label: 'Clients',       href: '/clients',    moduleKey: 'clients',    defaultRoles: ['admin', 'manager', 'sales'] },
+  { label: 'Orders',        href: '/orders',     moduleKey: 'orders',     defaultRoles: ['admin', 'manager', 'sales'] },
+  { label: 'Dispatches',    href: '/dispatches', moduleKey: 'dispatches', defaultRoles: ['admin', 'ops', 'sales'] },
+  { label: 'Contracts',     href: '/contracts',  moduleKey: 'contracts',  defaultRoles: ['admin', 'manager', 'sales'] },
+  { label: 'Users',         href: '/users',      moduleKey: 'users',      defaultRoles: ['admin'] },
 ]
 
 export default function Sidebar() {
@@ -36,10 +43,11 @@ export default function Sidebar() {
   }
 
   const visibleLinks = ALL_NAV.filter(link => {
-    if (!link.roles) return true
-    if (!profile) return true // show all while loading
-    if (link.checkFn) return link.checkFn(profile)
-    return link.roles.includes(profile.role)
+    if (!profile) return true
+    if (profile.role === 'admin') return true
+    if (profile.allowed_modules) return profile.allowed_modules.includes(link.moduleKey)
+    if (!link.defaultRoles) return true
+    return link.defaultRoles.includes(profile.role)
   })
 
   return (

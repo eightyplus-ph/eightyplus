@@ -11,6 +11,7 @@ export interface Profile {
   can_manage_contracts: boolean
   can_view_orders: boolean
   can_view_clients: boolean
+  allowed_modules: string[] | null
 }
 
 export function useProfile() {
@@ -21,7 +22,7 @@ export function useProfile() {
       if (!user) return null
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, role, can_create_dispatches, can_manage_contracts, can_view_orders, can_view_clients')
+        .select('id, full_name, role, can_create_dispatches, can_manage_contracts, can_view_orders, can_view_clients, allowed_modules')
         .eq('id', user.id)
         .maybeSingle()
       // Surface real failures (e.g. a missing column → 400) instead of silently
