@@ -64,15 +64,41 @@ function VarianceBadge({ variance }: { variance: number }) {
 
 // ─── History view ─────────────────────────────────────────────────────────────
 
-function CountHistory({ counts, onStart }: { counts: PhysicalCount[]; onStart: () => void }) {
+function CountHistory({ counts, onStart, onReview }: { counts: PhysicalCount[]; onStart: () => void; onReview: (c: PhysicalCount) => void }) {
+  const pending = counts.filter(c => c.status === 'pending_approval' || c.status === 'in_progress')
   const completed = counts.filter(c => c.status === 'approved' || c.status === 'rejected')
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">No active count session.</p>
+        <p className="text-sm text-gray-500">{pending.length > 0 ? `${pending.length} count${pending.length !== 1 ? 's' : ''} awaiting approval` : 'No active count session.'}</p>
         <Button onClick={onStart}>Start Physical Count</Button>
       </div>
+
+      {pending.length > 0 && (
+        <Card>
+          <div className="px-4 py-3 border-b border-gray-100">
+            <p className="text-sm font-medium text-gray-700">Awaiting approval</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {pending.map(c => (
+              <div key={c.id} className="flex items-center justify-between px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900">
+                    {c.performed_by}
+                    <span className="text-gray-400 font-normal"> · {new Date(c.count_date + 'T00:00:00').toLocaleDateString()}</span>
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">{c.notes ?? 'No notes'}</p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <VarianceBadge variance={parseFloat(c.total_variance_kg ?? '0')} />
+                  <Button onClick={() => onReview(c)}>Review</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {completed.length > 0 && (
         <Card>
@@ -563,7 +589,8 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
 // ─── Main tab ─────────────────────────────────────────────────────────────────
 
 export default function PhysicalCountTab() {
-  const [startingNew, setStartingNew] = useState(false)
+  const [view, setView] = useState<'list' | 'new'>('list')
+  const [approving, setApproving] = useState<PhysicalCount | null>(null)
 
   const { data: counts = [], isLoading } = useQuery<PhysicalCount[]>({
     queryKey: ['physical-counts'],
@@ -579,15 +606,9 @@ export default function PhysicalCountTab() {
 
   if (isLoading) return <p className="text-sm text-gray-400">Loading…</p>
 
-  const activeCount = counts.find(c => c.status === 'in_progress' || c.status === 'pending_approval')
+  // Multiple counts can be open at once (e.g. one per location, counted by different teams).
+  if (approving) return <ApprovalView count={approving} onDone={() => setApproving(null)} />
+  if (view === 'new') return <CountForm onCancel={() => setView('list')} />
 
-  if (activeCount?.status === 'pending_approval') {
-    return <ApprovalView count={activeCount} onDone={() => setStartingNew(false)} />
-  }
-
-  if (startingNew || activeCount?.status === 'in_progress') {
-    return <CountForm existingCount={activeCount} onCancel={() => setStartingNew(false)} />
-  }
-
-  return <CountHistory counts={counts} onStart={() => setStartingNew(true)} />
+  return <CountHistory counts={counts} onStart={() => setView('new')} onReview={setApproving} />
 }
