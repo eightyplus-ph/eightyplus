@@ -335,7 +335,7 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
         .eq('contract_id', contract.id)
         .order('order_date')
       if (error) throw error
-      return data as ContractOrder[]
+      return data as unknown as ContractOrder[]
     },
   })
 

@@ -10,6 +10,7 @@ const MODULES = [
   { key: 'inventory',  label: 'Inventory' },
   { key: 'receiving',  label: 'Receiving' },
   { key: 'transfers',  label: 'Transfers' },
+  { key: 'repack',     label: 'Repack' },
   { key: 'lots',       label: 'Product Names' },
   { key: 'locations',  label: 'Locations' },
   { key: 'clients',    label: 'Clients' },

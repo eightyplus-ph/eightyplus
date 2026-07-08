@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
 import { useProfile } from '@/lib/profile'
+import { formatUnitsBySku, skuUnit } from '@/lib/sku'
 
 interface LocationBreakdown {
   locationId: string
@@ -24,20 +25,22 @@ interface ProductRow {
   availableSacks: number
   openOrderCount: number
   dispatchCount: number
+  inStockBySku: Record<string, number>
   locations: LocationBreakdown[]
 }
 
-function StatCell({ kg, sacks }: { kg: number; sacks: number }) {
+function StatCell({ kg, sacks, bySku }: { kg: number; sacks: number; bySku?: Record<string, number> }) {
+  const sub = bySku ? formatUnitsBySku(bySku) : `${sacks} sacks`
   return (
     <td className="px-4 py-3 text-right">
       <p className="text-gray-900 font-medium">{Math.round(kg)}</p>
-      <p className="text-gray-400 text-xs">{sacks} sacks</p>
+      <p className="text-gray-400 text-xs">{sub}</p>
     </td>
   )
 }
 
 function StatCellSub({ kg, sacks, skuType }: { kg: number; sacks: number; skuType?: string }) {
-  const unitLabel = skuType === 'retail_1kg' ? 'units' : 'sacks'
+  const unitLabel = skuUnit(skuType)
   return (
     <td className="px-4 py-2 text-right">
       <p className="text-gray-600 text-xs">{Math.round(kg)} kg</p>
@@ -116,12 +119,13 @@ export default function DashboardPage() {
         const sackWeightKg = b.sack_weight_kg ? parseFloat(String(b.sack_weight_kg)) : null
 
         if (!map.has(lotId)) {
-          map.set(lotId, { lotId, name, inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, locations: [] })
+          map.set(lotId, { lotId, name, inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, inStockBySku: {}, locations: [] })
           locMap.set(lotId, new Map())
         }
         const row = map.get(lotId)!
         row.inStockKg += kg
         row.inStockSacks += sacks
+        row.inStockBySku[skuType] = (row.inStockBySku[skuType] ?? 0) + sacks
 
         const lm = locMap.get(lotId)!
         const locKey = `${locationId}::${skuType}::${sackWeightKg ?? ''}`
@@ -140,7 +144,7 @@ export default function DashboardPage() {
         const orderId = item.order_id as string
 
         if (!map.has(lotId)) {
-          map.set(lotId, { lotId, name: '—', inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, locations: [] })
+          map.set(lotId, { lotId, name: '—', inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, inStockBySku: {}, locations: [] })
         }
         const row = map.get(lotId)!
 
@@ -340,7 +344,7 @@ export default function DashboardPage() {
                           <span className="truncate" title={row.name}>{row.name}</span>
                         </div>
                       </td>
-                      <StatCell kg={row.inStockKg} sacks={row.inStockSacks} />
+                      <StatCell kg={row.inStockKg} sacks={row.inStockSacks} bySku={row.inStockBySku} />
                       <StatCell kg={row.reservedKg} sacks={row.reservedSacks} />
                       <StatCell kg={row.availableKg} sacks={row.availableSacks} />
                       <CountCell count={row.openOrderCount} />

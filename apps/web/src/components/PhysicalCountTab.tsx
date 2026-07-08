@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { isFixedWeightSku, skuUnit } from '@/lib/sku'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,7 +29,7 @@ interface CountBatch {
   weight_kg: string
   sacks: number | null
   sack_weight_kg: string | null
-  sku_type: string
+  sku_type: string | null
   lots: { name: string } | null
   locations: { name: string } | null
 }
@@ -47,6 +48,7 @@ interface PhysicalCountItem {
     weight_kg: string
     sacks: number | null
     sack_weight_kg: string | null
+    sku_type: string | null
     lots: { name: string } | null
     locations: { name: string } | null
   } | null
@@ -70,11 +72,11 @@ type Overrides = Record<string, RowOverride>
 
 function getRow(batch: CountBatch, overrides: Overrides) {
   const o = overrides[batch.id] ?? {}
-  const isRetail = batch.sku_type === 'retail_1kg'
+  const fixed = isFixedWeightSku(batch.sku_type)
   return {
     included:     o.included     ?? true,
     sacks:        o.sacks        ?? (batch.sacks != null ? String(batch.sacks) : ''),
-    sackWeightKg: isRetail ? '1' : (o.sackWeightKg ?? (batch.sack_weight_kg ?? '')),
+    sackWeightKg: fixed ? '1' : (o.sackWeightKg ?? (batch.sack_weight_kg ?? '')),
   }
 }
 
@@ -192,14 +194,14 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     const countId = countData[0].id
     const items = includedBatches.map(b => {
       const row = getRow(b, overrides)
-      const isRetail = b.sku_type === 'retail_1kg'
+      const fixed = isFixedWeightSku(b.sku_type)
       return {
         physical_count_id: countId,
         batch_id: b.id,
         system_kg: parseFloat(b.weight_kg).toFixed(2),
         counted_kg: computeKg(row.sacks, row.sackWeightKg).toFixed(2),
         counted_sacks: parseInt(row.sacks) || null,
-        counted_sack_weight_kg: isRetail ? 1 : (parseFloat(row.sackWeightKg) || null),
+        counted_sack_weight_kg: fixed ? 1 : (parseFloat(row.sackWeightKg) || null),
       }
     })
 
@@ -239,8 +241,8 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted sacks</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / sack</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / unit</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">= Counted kg</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
@@ -257,7 +259,8 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                   </tr>
                   {locBatches.map(batch => {
                     const row = getRow(batch, overrides)
-                    const isRetail = batch.sku_type === 'retail_1kg'
+                    const fixed = isFixedWeightSku(batch.sku_type)
+                    const unit = skuUnit(batch.sku_type)
                     const countedKg = computeKg(row.sacks, row.sackWeightKg)
                     const systemKg = parseFloat(batch.weight_kg)
                     const variance = countedKg > 0 ? countedKg - systemKg : 0
@@ -278,10 +281,10 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                         <td className="px-3 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
                         <td className="px-3 py-2.5 font-medium text-gray-900">
                           {batch.lots?.name ?? '—'}
-                          {isRetail && <span className="ml-1.5 text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">1 kg bags</span>}
+                          {fixed && <span className="ml-1.5 text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">1 kg bags</span>}
                         </td>
                         <td className="px-3 py-2.5 text-right text-gray-500 tabular-nums text-xs">
-                          {batch.sacks != null ? <>{batch.sacks} sk · </> : ''}{systemKg.toFixed(0)} kg
+                          {batch.sacks != null ? <>{batch.sacks} {unit} · </> : ''}{systemKg.toFixed(0)} kg
                         </td>
                         <td className="px-3 py-2.5 text-right">
                           <input
@@ -294,7 +297,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                           />
                         </td>
                         <td className="px-3 py-2.5 text-right">
-                          {isRetail ? (
+                          {fixed ? (
                             <span className="text-xs text-gray-400 tabular-nums">1.000</span>
                           ) : (
                             <input
@@ -360,7 +363,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     queryFn: async () => {
       const { data, error } = await supabase
         .from('physical_count_items')
-        .select('id, batch_id, system_kg, counted_kg, counted_sacks, counted_sack_weight_kg, approved_at, approved_by, batches(batch_number, weight_kg, sacks, sack_weight_kg, lots(name), locations(name))')
+        .select('id, batch_id, system_kg, counted_kg, counted_sacks, counted_sack_weight_kg, approved_at, approved_by, batches(batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lots(name), locations(name))')
         .eq('physical_count_id', count.id)
       if (error) throw error
       return data as unknown as PhysicalCountItem[]
@@ -398,7 +401,6 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         }])
       }
 
-      // Always write the counted weight + any new sack data
       await supabase.from('batches').update({
         weight_kg: countedKg,
         ...(item.counted_sacks != null && { sacks: item.counted_sacks }),
@@ -447,9 +449,10 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
           </td>
         </tr>
         {locItems.map(item => {
-          const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
-          const countedKg = parseFloat(item.counted_kg)
-          const liveGap   = countedKg - currentKg
+          const currentKg  = parseFloat(item.batches?.weight_kg ?? item.system_kg)
+          const countedKg  = parseFloat(item.counted_kg)
+          const liveGap    = countedKg - currentKg
+          const unit       = skuUnit(item.batches?.sku_type)
           const isSelected = selected.has(item.id)
           return (
             <tr
@@ -464,7 +467,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
               <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{item.batches?.batch_number ?? '—'}</td>
               <td className="px-4 py-2.5 font-medium text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
               <td className="px-4 py-2.5 text-right tabular-nums text-xs text-gray-700">
-                {item.counted_sacks != null ? <>{item.counted_sacks} sk · </> : ''}{countedKg.toFixed(2)} kg
+                {item.counted_sacks != null ? <>{item.counted_sacks} {unit} · </> : ''}{countedKg.toFixed(2)} kg
               </td>
               <td className="px-4 py-2.5 text-right tabular-nums text-xs text-gray-400">{parseFloat(item.system_kg).toFixed(2)}</td>
               <td className="px-4 py-2.5 text-right tabular-nums text-xs font-medium text-gray-700">{currentKg.toFixed(2)}</td>
