@@ -354,10 +354,6 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
   const totalContracted = items.reduce((s, i) =>
     s + months.reduce((ms, m) => ms + (i.monthly_schedule?.[m] ?? 0), 0), 0)
 
-  // Total ordered kg across all orders
-  const totalOrdered = orders.reduce((s, o) =>
-    s + o.order_items.reduce((os, oi) => os + parseFloat(oi.weight_ordered_kg), 0), 0)
-
   return (
     <div className="bg-gray-50 border-b border-gray-200 divide-y divide-gray-200">
       {/* Monthly schedule */}
@@ -415,72 +411,88 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
         </div>
       )}
 
-      {/* Orders against this contract */}
+      {/* Orders against this contract — grouped by product */}
       <div className="px-6 py-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Orders Against This Contract</p>
-          {totalContracted > 0 && (
-            <p className="text-xs text-gray-500">
-              <span className="font-medium text-gray-900">{totalOrdered.toLocaleString()} kg</span> ordered of {totalContracted.toLocaleString()} kg contracted
-              {totalOrdered < totalContracted && (
-                <span className="text-orange-600 ml-1">· {(totalContracted - totalOrdered).toLocaleString()} kg remaining</span>
-              )}
-            </p>
-          )}
-        </div>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Orders Against This Contract</p>
 
         {orders.length === 0 ? (
           <p className="text-xs text-gray-400 italic">No orders linked yet.</p>
-        ) : (
-          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-            <table className="text-sm min-w-full">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Order</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Products</th>
-                  <th className="text-right px-3 py-2 font-medium text-gray-500">Weight</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Status</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Sched. Dispatch</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-500">Actual Dispatch</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map(o => {
-                  const weightKg = o.order_items.reduce((s, oi) => s + parseFloat(oi.weight_ordered_kg), 0)
-                  const products = [...new Set(o.order_items.map(oi => oi.lots?.name ?? '—').filter(Boolean))]
-                  const dispatched = o.dispatches.length > 0
-                    ? o.dispatches.map(d => fmt(d.dispatched_date)).join(', ')
-                    : null
-                  return (
-                    <tr key={o.id} className="border-b border-gray-100 last:border-0">
-                      <td className="px-3 py-2">
-                        <p className="font-mono text-xs font-medium text-gray-900">{o.os_number}</p>
-                        <p className="text-xs text-gray-400">{fmt(o.order_date)}</p>
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-700 max-w-[200px]">
-                        {products.join(', ') || '—'}
-                      </td>
-                      <td className="px-3 py-2 text-right font-medium text-gray-900 text-xs">
-                        {weightKg.toLocaleString()} kg
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ORDER_STATUS_COLORS[o.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                          {o.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-600">
-                        {o.scheduled_dispatch_date ? fmt(o.scheduled_dispatch_date) : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-600">
-                        {dispatched ?? <span className="text-gray-300">—</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        ) : (() => {
+          // Group order items by lot name across all orders
+          const byLot = new Map<string, {
+            lotName: string
+            rows: { osNumber: string; orderDate: string; status: string; weightKg: number; schedDispatch: string | null; dispatched: string | null }[]
+          }>()
+
+          for (const o of orders) {
+            const dispatched = o.dispatches.length > 0
+              ? o.dispatches.map(d => fmt(d.dispatched_date)).join(', ')
+              : null
+            for (const oi of o.order_items) {
+              const lotName = oi.lots?.name ?? 'Unknown product'
+              if (!byLot.has(lotName)) byLot.set(lotName, { lotName, rows: [] })
+              byLot.get(lotName)!.rows.push({
+                osNumber: o.os_number,
+                orderDate: fmt(o.order_date),
+                status: o.status,
+                weightKg: parseFloat(oi.weight_ordered_kg),
+                schedDispatch: o.scheduled_dispatch_date,
+                dispatched,
+              })
+            }
+          }
+
+          return (
+            <div className="space-y-3">
+              {[...byLot.values()].map(({ lotName, rows }) => {
+                const totalOrderedLot = rows.reduce((s, r) => s + r.weightKg, 0)
+                return (
+                  <div key={lotName} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                      <p className="text-xs font-medium text-gray-700">{lotName}</p>
+                      <p className="text-xs text-gray-500">
+                        <span className="font-medium text-gray-900">{totalOrderedLot.toLocaleString()} kg</span> ordered
+                      </p>
+                    </div>
+                    <table className="text-sm min-w-full">
+                      <thead>
+                        <tr className="border-b border-gray-100">
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-400 text-xs">Order</th>
+                          <th className="text-right px-3 py-1.5 font-medium text-gray-400 text-xs">Weight</th>
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-400 text-xs">Status</th>
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-400 text-xs">Sched. Dispatch</th>
+                          <th className="text-left px-3 py-1.5 font-medium text-gray-400 text-xs">Actual Dispatch</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, i) => (
+                          <tr key={i} className="border-b border-gray-50 last:border-0">
+                            <td className="px-3 py-2">
+                              <p className="font-mono text-xs font-medium text-gray-900">{r.osNumber}</p>
+                              <p className="text-xs text-gray-400">{r.orderDate}</p>
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-gray-900 text-xs">{r.weightKg.toLocaleString()} kg</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ORDER_STATUS_COLORS[r.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-xs text-gray-600">
+                              {r.schedDispatch ? fmt(r.schedDispatch) : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-gray-600">
+                              {r.dispatched ?? <span className="text-gray-300">—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
       </div>
     </div>
   )
