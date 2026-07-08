@@ -11,6 +11,7 @@ const ALL_NAV: NavLink[] = [
   { label: 'Inventory',     href: '/inventory' },
   { label: 'Receiving',     href: '/receiving',  roles: ['admin', 'ops'] },
   { label: 'Transfers',     href: '/transfers',  roles: ['admin', 'ops'] },
+  { label: 'Repack',        href: '/repack',     roles: ['admin', 'ops'] },
   { label: 'Product Names', href: '/lots' },
   { label: 'Locations',     href: '/locations',  roles: ['admin', 'ops', 'manager'] },
   { label: 'Clients',       href: '/clients',    roles: ['admin', 'manager', 'sales'], checkFn: canViewClients },
