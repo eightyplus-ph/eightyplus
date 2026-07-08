@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,8 @@ interface CountBatch {
   batch_number: string
   weight_kg: string
   sacks: number | null
+  sack_weight_kg: string | null
+  sku_type: string
   lots: { name: string } | null
   locations: { name: string } | null
 }
@@ -36,9 +38,15 @@ interface PhysicalCountItem {
   batch_id: string
   system_kg: string
   counted_kg: string
+  counted_sacks: number | null
+  counted_sack_weight_kg: string | null
+  approved_at: string | null
+  approved_by: string | null
   batches: {
     batch_number: string
+    weight_kg: string
     sacks: number | null
+    sack_weight_kg: string | null
     lots: { name: string } | null
     locations: { name: string } | null
   } | null
@@ -51,26 +59,41 @@ const todayStr = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function VarianceBadge({ variance }: { variance: number }) {
-  if (Math.abs(variance) < 0.01) return <span className="text-gray-400">—</span>
-  const cls = variance < 0
-    ? 'text-red-600 font-semibold'
-    : 'text-green-600 font-semibold'
-  return <span className={cls}>{variance > 0 ? '+' : ''}{variance.toFixed(2)} kg</span>
+function GapBadge({ gap }: { gap: number }) {
+  if (Math.abs(gap) < 0.01) return <span className="text-green-600 font-medium text-xs">matched</span>
+  const cls = gap < 0 ? 'text-red-600 font-semibold' : 'text-amber-600 font-semibold'
+  return <span className={cls}>{gap > 0 ? '+' : ''}{gap.toFixed(2)} kg</span>
 }
 
-// ─── History view ─────────────────────────────────────────────────────────────
+interface RowOverride { included?: boolean; sacks?: string; sackWeightKg?: string }
+type Overrides = Record<string, RowOverride>
+
+function getRow(batch: CountBatch, overrides: Overrides) {
+  const o = overrides[batch.id] ?? {}
+  const isRetail = batch.sku_type === 'retail_1kg'
+  return {
+    included:     o.included     ?? true,
+    sacks:        o.sacks        ?? (batch.sacks != null ? String(batch.sacks) : ''),
+    sackWeightKg: isRetail ? '1' : (o.sackWeightKg ?? (batch.sack_weight_kg ?? '')),
+  }
+}
+
+function computeKg(sacks: string, sackWeightKg: string): number {
+  const s = parseFloat(sacks)
+  const w = parseFloat(sackWeightKg)
+  return s > 0 && w > 0 ? s * w : 0
+}
+
+// ─── History ──────────────────────────────────────────────────────────────────
 
 function CountHistory({ counts, onStart }: { counts: PhysicalCount[]; onStart: () => void }) {
   const completed = counts.filter(c => c.status === 'approved' || c.status === 'rejected')
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">No active count session.</p>
         <Button onClick={onStart}>Start Physical Count</Button>
       </div>
-
       {completed.length > 0 && (
         <Card>
           <div className="overflow-x-auto">
@@ -80,37 +103,26 @@ function CountHistory({ counts, onStart }: { counts: PhysicalCount[]; onStart: (
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Date</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Performed By</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Reviewed By</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-500">Total Variance</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Explanation</th>
+                  <th className="text-right px-4 py-3 font-medium text-gray-500">Net Variance</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">Notes</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500">Result</th>
                 </tr>
               </thead>
               <tbody>
-                {completed.map(c => {
-                  const variance = parseFloat(c.total_variance_kg ?? '0')
-                  return (
-                    <tr key={c.id} className="border-b border-gray-100">
-                      <td className="px-4 py-3 text-gray-600">
-                        {new Date(c.count_date + 'T00:00:00').toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{c.performed_by}</td>
-                      <td className="px-4 py-3 text-gray-600">{c.reviewed_by ?? '—'}</td>
-                      <td className="px-4 py-3 text-right">
-                        <VarianceBadge variance={variance} />
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 max-w-xs">
-                        {c.variance_notes ?? (c.rejection_notes ? `Rejected: ${c.rejection_notes}` : '—')}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          c.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                        }`}>
-                          {c.status === 'approved' ? 'Approved' : 'Rejected'}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
+                {completed.map(c => (
+                  <tr key={c.id} className="border-b border-gray-100">
+                    <td className="px-4 py-3 text-gray-600">{new Date(c.count_date + 'T00:00:00').toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-gray-600">{c.performed_by}</td>
+                    <td className="px-4 py-3 text-gray-600">{c.reviewed_by ?? '—'}</td>
+                    <td className="px-4 py-3 text-right"><GapBadge gap={parseFloat(c.total_variance_kg ?? '0')} /></td>
+                    <td className="px-4 py-3 text-xs text-gray-500 max-w-xs">{c.variance_notes ?? (c.rejection_notes ? `Rejected: ${c.rejection_notes}` : '—')}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${c.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {c.status === 'approved' ? 'Approved' : 'Rejected'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -120,14 +132,14 @@ function CountHistory({ counts, onStart }: { counts: PhysicalCount[]; onStart: (
   )
 }
 
-// ─── Count form ───────────────────────────────────────────────────────────────
+// ─── Count Form ───────────────────────────────────────────────────────────────
 
 function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount; onCancel: () => void }) {
   const queryClient = useQueryClient()
   const [countDate, setCountDate] = useState(existingCount?.count_date ?? todayStr())
   const [performedBy, setPerformedBy] = useState(existingCount?.performed_by ?? '')
   const [notes, setNotes] = useState(existingCount?.notes ?? '')
-  const [quantities, setQuantities] = useState<Record<string, string>>({})
+  const [overrides, setOverrides] = useState<Overrides>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -136,7 +148,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, weight_kg, sacks, lots(name), locations(name)')
+        .select('id, batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lots(name), locations(name)')
         .gt('weight_kg', 0)
         .order('received_at', { ascending: false })
       if (error) throw error
@@ -144,17 +156,25 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     },
   })
 
-  const getQty = (batch: CountBatch) =>
-    quantities[batch.id] !== undefined ? quantities[batch.id] : parseFloat(batch.weight_kg).toFixed(2)
+  const setRow = (batchId: string, field: keyof RowOverride, value: string | boolean) =>
+    setOverrides(prev => ({ ...prev, [batchId]: { ...(prev[batchId] ?? {}), [field]: value } }))
 
-  const netVariance = batches.reduce((sum, b) => {
-    const counted = parseFloat(getQty(b) || '0')
-    const system = parseFloat(b.weight_kg)
-    return sum + (counted - system)
+  const grouped = batches.reduce<Record<string, CountBatch[]>>((acc, b) => {
+    const loc = b.locations?.name ?? 'Untagged'
+    ;(acc[loc] ??= []).push(b)
+    return acc
+  }, {})
+
+  const includedBatches = batches.filter(b => getRow(b, overrides).included)
+
+  const netVariance = includedBatches.reduce((sum, b) => {
+    const row = getRow(b, overrides)
+    return sum + computeKg(row.sacks, row.sackWeightKg) - parseFloat(b.weight_kg)
   }, 0)
 
   const handleSubmit = async () => {
     if (!performedBy.trim()) { setError('Performed by is required.'); return }
+    if (includedBatches.length === 0) { setError('Include at least one product.'); return }
     setError(''); setSubmitting(true)
 
     const { data: countData, error: countErr } = await supabase
@@ -170,12 +190,18 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     if (countErr) { setError(countErr.message); setSubmitting(false); return }
 
     const countId = countData[0].id
-    const items = batches.map(b => ({
-      physical_count_id: countId,
-      batch_id: b.id,
-      system_kg: parseFloat(b.weight_kg).toFixed(2),
-      counted_kg: parseFloat(getQty(b) || b.weight_kg).toFixed(2),
-    }))
+    const items = includedBatches.map(b => {
+      const row = getRow(b, overrides)
+      const isRetail = b.sku_type === 'retail_1kg'
+      return {
+        physical_count_id: countId,
+        batch_id: b.id,
+        system_kg: parseFloat(b.weight_kg).toFixed(2),
+        counted_kg: computeKg(row.sacks, row.sackWeightKg).toFixed(2),
+        counted_sacks: parseInt(row.sacks) || null,
+        counted_sack_weight_kg: isRetail ? 1 : (parseFloat(row.sackWeightKg) || null),
+      }
+    })
 
     const { error: itemsErr } = await supabase.from('physical_count_items').insert(items)
     if (itemsErr) { setError(itemsErr.message); setSubmitting(false); return }
@@ -184,15 +210,8 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     setSubmitting(false)
   }
 
-  const changedCount = batches.filter(b => {
-    const qty = quantities[b.id]
-    if (qty === undefined) return false
-    return Math.abs(parseFloat(qty) - parseFloat(b.weight_kg)) >= 0.01
-  }).length
-
   return (
     <div className="space-y-6">
-      {/* Form header */}
       <div className="flex items-start justify-between">
         <div className="grid grid-cols-2 gap-4 max-w-lg">
           <div className="space-y-1.5">
@@ -216,76 +235,101 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch #</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sacks</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
+                <th className="w-8 px-3 py-2.5" />
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted sacks</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / sack</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">= Counted kg</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
-              {(() => {
-                const grouped = batches.reduce<Record<string, CountBatch[]>>((acc, b) => {
-                  const loc = b.locations?.name ?? 'Untagged'
-                  ;(acc[loc] ??= []).push(b)
-                  return acc
-                }, {})
-                return Object.entries(grouped).map(([locName, locBatches]) => (
-                  <>
-                    <tr key={`loc-${locName}`}>
-                      <td colSpan={6} className="px-4 pt-4 pb-1.5">
-                        <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
-                        <div className="mt-1 h-px bg-gray-200" />
-                      </td>
-                    </tr>
-                    {locBatches.map(batch => {
-                      const counted = parseFloat(getQty(batch) || '0')
-                      const system = parseFloat(batch.weight_kg)
-                      const variance = counted - system
-                      const isDirty = quantities[batch.id] !== undefined && Math.abs(variance) >= 0.01
-                      return (
-                        <tr key={batch.id} className={`border-b border-gray-100 ${isDirty ? 'bg-amber-50/60' : ''}`}>
-                          <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
-                          <td className="px-4 py-2.5 font-medium text-gray-900">{batch.lots?.name ?? '—'}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            {batch.sacks != null
-                              ? <span className="font-semibold text-gray-800 tabular-nums">{batch.sacks} <span className="text-gray-400 font-normal text-xs">sacks</span></span>
-                              : <span className="text-gray-300 text-xs">—</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
-                          <td className="px-4 py-2.5 text-right">
+              {isLoading && <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
+              {Object.entries(grouped).map(([locName, locBatches]) => (
+                <Fragment key={locName}>
+                  <tr>
+                    <td colSpan={8} className="px-3 pt-4 pb-1.5">
+                      <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
+                      <div className="mt-1 h-px bg-gray-200" />
+                    </td>
+                  </tr>
+                  {locBatches.map(batch => {
+                    const row = getRow(batch, overrides)
+                    const isRetail = batch.sku_type === 'retail_1kg'
+                    const countedKg = computeKg(row.sacks, row.sackWeightKg)
+                    const systemKg = parseFloat(batch.weight_kg)
+                    const variance = countedKg > 0 ? countedKg - systemKg : 0
+                    const hasVariance = countedKg > 0 && Math.abs(variance) >= 0.01
+                    return (
+                      <tr
+                        key={batch.id}
+                        className={`border-b border-gray-100 ${!row.included ? 'opacity-35' : hasVariance ? 'bg-amber-50/50' : ''}`}
+                      >
+                        <td className="px-3 py-2.5 text-center">
+                          <input
+                            type="checkbox"
+                            checked={row.included}
+                            onChange={() => setRow(batch.id, 'included', !row.included)}
+                            className="rounded border-gray-300"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
+                        <td className="px-3 py-2.5 font-medium text-gray-900">
+                          {batch.lots?.name ?? '—'}
+                          {isRetail && <span className="ml-1.5 text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">1 kg bags</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-gray-500 tabular-nums text-xs">
+                          {batch.sacks != null ? <>{batch.sacks} sk · </> : ''}{systemKg.toFixed(0)} kg
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <input
+                            type="number" min="0" step="1"
+                            value={row.sacks}
+                            onChange={e => setRow(batch.id, 'sacks', e.target.value)}
+                            disabled={!row.included}
+                            placeholder="—"
+                            className="w-20 text-right rounded-md border border-gray-200 px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-300"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {isRetail ? (
+                            <span className="text-xs text-gray-400 tabular-nums">1.000</span>
+                          ) : (
                             <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={getQty(batch)}
-                              onChange={e => setQuantities(prev => ({ ...prev, [batch.id]: e.target.value }))}
-                              className={`w-24 text-right rounded-md border px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 ${
-                                isDirty
-                                  ? 'border-amber-400 bg-amber-50 focus:ring-amber-400'
-                                  : 'border-gray-200 focus:ring-blue-500'
-                              }`}
+                              type="number" min="0" step="0.001"
+                              value={row.sackWeightKg}
+                              onChange={e => setRow(batch.id, 'sackWeightKg', e.target.value)}
+                              disabled={!row.included}
+                              placeholder="—"
+                              className="w-20 text-right rounded-md border border-gray-200 px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-300"
                             />
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <VarianceBadge variance={variance} />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </>
-                ))
-              })()}
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-medium text-gray-900 tabular-nums">
+                          {row.included && countedKg > 0
+                            ? `${countedKg.toFixed(2)} kg`
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {row.included && countedKg > 0
+                            ? <GapBadge gap={variance} />
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </Fragment>
+              ))}
             </tbody>
-            {batches.length > 0 && (
+            {includedBatches.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-gray-700 text-right">Net variance</td>
-                  <td className="px-4 py-3 text-right">
-                    <VarianceBadge variance={netVariance} />
+                  <td colSpan={7} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
+                    Net variance · {includedBatches.length} product{includedBatches.length !== 1 ? 's' : ''}
                   </td>
+                  <td className="px-3 py-3 text-right"><GapBadge gap={netVariance} /></td>
                 </tr>
               </tfoot>
             )}
@@ -294,92 +338,145 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
       </Card>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex items-center gap-4">
-        <Button onClick={handleSubmit} disabled={submitting || isLoading}>
-          {submitting ? 'Submitting…' : 'Submit for Approval'}
-        </Button>
-        {changedCount > 0 && (
-          <p className="text-sm text-amber-600 font-medium">{changedCount} item{changedCount !== 1 ? 's' : ''} with variance</p>
-        )}
-      </div>
+      <Button onClick={handleSubmit} disabled={submitting || isLoading || includedBatches.length === 0}>
+        {submitting ? 'Submitting…' : `Submit ${includedBatches.length} product${includedBatches.length !== 1 ? 's' : ''} for Approval`}
+      </Button>
     </div>
   )
 }
 
-// ─── Approval view ────────────────────────────────────────────────────────────
+// ─── Approval View ────────────────────────────────────────────────────────────
 
 function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => void }) {
   const queryClient = useQueryClient()
   const [reviewedBy, setReviewedBy] = useState('')
-  const [varianceNotes, setVarianceNotes] = useState('')
-  const [rejectionNotes, setRejectionNotes] = useState('')
-  const [showReject, setShowReject] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
+  const [closing, setClosing] = useState(false)
   const [error, setError] = useState('')
 
-  const { data: items = [], isLoading } = useQuery<PhysicalCountItem[]>({
+  const { data: items = [], isLoading, refetch } = useQuery<PhysicalCountItem[]>({
     queryKey: ['physical-count-items', count.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('physical_count_items')
-        .select('id, batch_id, system_kg, counted_kg, batches(batch_number, sacks, lots(name), locations(name))')
+        .select('id, batch_id, system_kg, counted_kg, counted_sacks, counted_sack_weight_kg, approved_at, approved_by, batches(batch_number, weight_kg, sacks, sack_weight_kg, lots(name), locations(name))')
         .eq('physical_count_id', count.id)
       if (error) throw error
       return data as unknown as PhysicalCountItem[]
     },
+    refetchInterval: 30_000,
   })
 
-  const variantItems = items.filter(i => Math.abs(parseFloat(i.counted_kg) - parseFloat(i.system_kg)) >= 0.01)
+  const pendingItems  = items.filter(i => !i.approved_at)
+  const approvedItems = items.filter(i =>  i.approved_at)
 
-  const handleApprove = async () => {
+  const toggle = (id: string) =>
+    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const handleApproveSelected = async () => {
     if (!reviewedBy.trim()) { setError('Reviewed by is required.'); return }
-    if (variantItems.length > 0 && !varianceNotes.trim()) { setError('Variance explanation is required when adjustments exist.'); return }
+    if (selected.size === 0) { setError('Select at least one item.'); return }
     setError(''); setSubmitting(true)
 
-    const txNotes = `Physical count by ${count.performed_by}, approved by ${reviewedBy.trim()}. ${varianceNotes.trim()}`
+    const toApprove = pendingItems.filter(i => selected.has(i.id))
+    const now = new Date().toISOString()
+    const txNote = `Physical count ${count.count_date} by ${count.performed_by}, approved by ${reviewedBy.trim()}`
 
-    // Close the count first — if this fails we stop before touching inventory
-    const { error: closeErr } = await supabase.from('physical_counts').update({
-      status: 'approved',
-      reviewed_by: reviewedBy.trim(),
-      reviewed_at: new Date().toISOString(),
-      variance_notes: varianceNotes.trim() || null,
-    }).eq('id', count.id)
-    if (closeErr) { setError(closeErr.message); setSubmitting(false); return }
+    for (const item of toApprove) {
+      const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
+      const countedKg = parseFloat(item.counted_kg)
+      const delta     = countedKg - currentKg
 
-    for (const item of variantItems) {
-      const delta = parseFloat(item.counted_kg) - parseFloat(item.system_kg)
-      await supabase.from('inventory_transactions').insert([{
-        batch_id: item.batch_id,
-        type: 'adjustment',
-        weight_change_kg: delta.toFixed(2),
-        physical_count_id: count.id,
-        notes: txNotes,
-      }])
-      await supabase.from('batches').update({ weight_kg: parseFloat(item.counted_kg) }).eq('id', item.batch_id)
+      if (Math.abs(delta) >= 0.01) {
+        await supabase.from('inventory_transactions').insert([{
+          batch_id:          item.batch_id,
+          type:              'adjustment',
+          weight_change_kg:  delta.toFixed(2),
+          physical_count_id: count.id,
+          notes:             txNote,
+        }])
+      }
+
+      // Always write the counted weight + any new sack data
+      await supabase.from('batches').update({
+        weight_kg: countedKg,
+        ...(item.counted_sacks != null && { sacks: item.counted_sacks }),
+        ...(item.counted_sack_weight_kg != null && { sack_weight_kg: parseFloat(item.counted_sack_weight_kg) }),
+      }).eq('id', item.batch_id)
+
+      await supabase.from('physical_count_items').update({
+        approved_at: now,
+        approved_by: reviewedBy.trim(),
+      }).eq('id', item.id)
     }
 
-    await queryClient.invalidateQueries({ queryKey: ['physical-counts'] })
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    await refetch()
+    setSelected(new Set())
     setSubmitting(false)
+  }
+
+  const handleCloseCount = async () => {
+    if (!reviewedBy.trim()) { setError('Reviewed by is required.'); return }
+    setError(''); setClosing(true)
+    await supabase.from('physical_counts').update({
+      status:      'approved',
+      reviewed_by: reviewedBy.trim(),
+      reviewed_at: new Date().toISOString(),
+    }).eq('id', count.id)
+    await queryClient.invalidateQueries({ queryKey: ['physical-counts'] })
+    setClosing(false)
     onDone()
   }
 
-  const handleReject = async () => {
-    if (!reviewedBy.trim()) { setError('Reviewed by is required.'); return }
-    setError(''); setSubmitting(true)
+  const renderItems = (rows: PhysicalCountItem[], isPending: boolean) => {
+    const grouped = rows.reduce<Record<string, PhysicalCountItem[]>>((acc, i) => {
+      const loc = i.batches?.locations?.name ?? 'Untagged'
+      ;(acc[loc] ??= []).push(i)
+      return acc
+    }, {})
 
-    await supabase.from('physical_counts').update({
-      status: 'rejected',
-      reviewed_by: reviewedBy.trim(),
-      reviewed_at: new Date().toISOString(),
-      rejection_notes: rejectionNotes.trim() || null,
-    }).eq('id', count.id)
-
-    await queryClient.invalidateQueries({ queryKey: ['physical-counts'] })
-    setSubmitting(false)
-    onDone()
+    return Object.entries(grouped).map(([locName, locItems]) => (
+      <Fragment key={`${locName}-${isPending}`}>
+        <tr>
+          <td colSpan={8} className="px-4 pt-4 pb-1.5">
+            <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
+            <div className="mt-1 h-px bg-gray-200" />
+          </td>
+        </tr>
+        {locItems.map(item => {
+          const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
+          const countedKg = parseFloat(item.counted_kg)
+          const liveGap   = countedKg - currentKg
+          const isSelected = selected.has(item.id)
+          return (
+            <tr
+              key={item.id}
+              className={`border-b border-gray-100 ${isPending && isSelected ? 'bg-blue-50/40' : ''} ${!isPending ? 'opacity-55' : ''}`}
+            >
+              <td className="px-4 py-2.5 text-center">
+                {isPending
+                  ? <input type="checkbox" checked={isSelected} onChange={() => toggle(item.id)} className="rounded border-gray-300" />
+                  : <span className="text-green-500 text-xs">✓</span>}
+              </td>
+              <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{item.batches?.batch_number ?? '—'}</td>
+              <td className="px-4 py-2.5 font-medium text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-gray-700">
+                {item.counted_sacks != null ? <>{item.counted_sacks} sk · </> : ''}{countedKg.toFixed(2)} kg
+              </td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-gray-400">{parseFloat(item.system_kg).toFixed(2)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-xs font-medium text-gray-700">{currentKg.toFixed(2)}</td>
+              <td className="px-4 py-2.5 text-right"><GapBadge gap={liveGap} /></td>
+              <td className="px-4 py-2.5 text-xs text-gray-400">
+                {!isPending && item.approved_by ? `by ${item.approved_by}` : ''}
+              </td>
+            </tr>
+          )
+        })}
+      </Fragment>
+    ))
   }
 
   return (
@@ -387,11 +484,11 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
         <p className="text-sm font-medium text-amber-800">Pending Approval</p>
         <p className="text-xs text-amber-600 mt-0.5">
-          Count submitted by <strong>{count.performed_by}</strong> for{' '}
-          {new Date(count.count_date + 'T00:00:00').toLocaleDateString()} ·{' '}
-          Total variance: <strong>{parseFloat(count.total_variance_kg ?? '0').toFixed(2)} kg</strong>
+          Count by <strong>{count.performed_by}</strong> · {new Date(count.count_date + 'T00:00:00').toLocaleDateString()}
+          {' · '}<strong>{pendingItems.length}</strong> pending · <strong>{approvedItems.length}</strong> approved
         </p>
         {count.notes && <p className="text-xs text-amber-600 mt-0.5">Notes: {count.notes}</p>}
+        <p className="text-xs text-amber-500 mt-1">Gap = counted − current system weight. Refreshes every 30s as dispatches are encoded.</p>
       </div>
 
       <Card>
@@ -399,98 +496,66 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch #</th>
+                <th className="w-8 px-4 py-2.5" />
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sacks</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">At count</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Current</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Gap</th>
+                <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
-              {(() => {
-                const grouped = items.reduce<Record<string, PhysicalCountItem[]>>((acc, i) => {
-                  const loc = i.batches?.locations?.name ?? 'Untagged'
-                  ;(acc[loc] ??= []).push(i)
-                  return acc
-                }, {})
-                return Object.entries(grouped).map(([locName, locItems]) => (
-                  <>
-                    <tr key={`loc-${locName}`}>
-                      <td colSpan={6} className="px-4 pt-4 pb-1.5">
-                        <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
-                        <div className="mt-1 h-px bg-gray-200" />
-                      </td>
-                    </tr>
-                    {locItems.map(item => {
-                      const system = parseFloat(item.system_kg)
-                      const counted = parseFloat(item.counted_kg)
-                      const variance = counted - system
-                      const hasVariance = Math.abs(variance) >= 0.01
-                      return (
-                        <tr key={item.id} className={`border-b border-gray-100 ${hasVariance ? 'bg-red-50/40' : ''}`}>
-                          <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{item.batches?.batch_number ?? '—'}</td>
-                          <td className="px-4 py-2.5 font-medium text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            {item.batches?.sacks != null
-                              ? <span className="font-semibold text-gray-800 tabular-nums">{item.batches.sacks} <span className="text-gray-400 font-normal text-xs">sacks</span></span>
-                              : <span className="text-gray-300 text-xs">—</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900 tabular-nums">{counted.toFixed(2)}</td>
-                          <td className="px-4 py-2.5 text-right"><VarianceBadge variance={variance} /></td>
-                        </tr>
-                      )
-                    })}
-                  </>
-                ))
-              })()}
+              {isLoading && <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
+
+              {pendingItems.length > 0 && (
+                <>
+                  <tr>
+                    <td colSpan={8} className="px-4 pt-3 pb-1">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pending</span>
+                        <button onClick={() => setSelected(new Set(pendingItems.map(i => i.id)))} className="text-xs text-blue-600 hover:underline">Select all</button>
+                        <button onClick={() => setSelected(new Set())} className="text-xs text-gray-400 hover:underline">Clear</button>
+                      </div>
+                    </td>
+                  </tr>
+                  {renderItems(pendingItems, true)}
+                </>
+              )}
+
+              {approvedItems.length > 0 && (
+                <>
+                  <tr>
+                    <td colSpan={8} className="px-4 pt-5 pb-1">
+                      <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Approved</span>
+                    </td>
+                  </tr>
+                  {renderItems(approvedItems, false)}
+                </>
+              )}
             </tbody>
           </table>
         </div>
       </Card>
 
       <div className="space-y-3 max-w-md">
-        {variantItems.length > 0 && (
-          <div className="space-y-1.5">
-            <Label>Variance Explanation *</Label>
-            <textarea
-              value={varianceNotes}
-              onChange={e => setVarianceNotes(e.target.value)}
-              rows={2}
-              placeholder="What caused the discrepancy? e.g. moisture loss, spillage during rebagging, counting error…"
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-none"
-            />
-          </div>
-        )}
-
         <div className="space-y-1.5">
           <Label>Reviewed By *</Label>
           <Input value={reviewedBy} onChange={e => setReviewedBy(e.target.value)} placeholder="Name" />
         </div>
-
-        {showReject && (
-          <div className="space-y-1.5">
-            <Label>Reason for Rejection</Label>
-            <Input value={rejectionNotes} onChange={e => setRejectionNotes(e.target.value)} placeholder="What needs to be recounted?" />
-          </div>
-        )}
-
         {error && <p className="text-sm text-red-600">{error}</p>}
-
-        <div className="flex gap-3">
-          <Button onClick={handleApprove} disabled={submitting}>
-            {submitting ? 'Applying…' : `Approve & Apply${variantItems.length > 0 ? ` (${variantItems.length} adjustment${variantItems.length !== 1 ? 's' : ''})` : ''}`}
+        <div className="flex gap-3 flex-wrap">
+          <Button onClick={handleApproveSelected} disabled={submitting || selected.size === 0}>
+            {submitting ? 'Applying…' : `Approve ${selected.size > 0 ? `${selected.size} selected` : 'selected'}`}
           </Button>
-          {!showReject ? (
-            <Button variant="outline" onClick={() => setShowReject(true)} disabled={submitting}>Reject</Button>
-          ) : (
-            <Button variant="outline" onClick={handleReject} disabled={submitting} className="text-red-600 border-red-300 hover:bg-red-50">
-              {submitting ? 'Rejecting…' : 'Confirm Rejection'}
-            </Button>
-          )}
+          <Button variant="outline" onClick={handleCloseCount} disabled={closing}>
+            {closing ? 'Closing…' : 'Close Count'}
+          </Button>
         </div>
+        <p className="text-xs text-gray-400">
+          Approve applies adjustments for selected items. Close Count ends the session — unapproved items are left as-is with no inventory change.
+        </p>
       </div>
     </div>
   )
