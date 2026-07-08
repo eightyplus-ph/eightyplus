@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
 import PhysicalCountTab from '@/components/PhysicalCountTab'
-import { skuUnit } from '@/lib/sku'
+import { isFixedWeightSku, skuUnit } from '@/lib/sku'
 
 interface ContractRef {
   product_name: string
@@ -34,8 +34,8 @@ function Pill({ active, onClick, children }: { active: boolean; onClick: () => v
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-        active ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700'
+      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+        active ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
       }`}
     >
       {children}
@@ -99,15 +99,14 @@ export default function InventoryPage() {
     return true
   })
 
-  const contractCount = batches.filter(b => b.contract_item_id).length
+  const contractCount  = batches.filter(b =>  b.contract_item_id).length
   const availableCount = batches.filter(b => !b.contract_item_id).length
-  const bagtikanCount = batches.filter(b => locationName(b).includes('bagtikan')).length
-  const pacoCount = batches.filter(b => locationName(b).includes('paco')).length
-  const totalKg = batches.reduce((s, b) => s + parseFloat(b.weight_kg), 0)
+  const bagtikanCount  = batches.filter(b => locationName(b).includes('bagtikan')).length
+  const pacoCount      = batches.filter(b => locationName(b).includes('paco')).length
+  const totalKg        = batches.reduce((s, b) => s + parseFloat(b.weight_kg), 0)
 
   return (
     <div>
-      {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
         {!isLoading && (
@@ -117,7 +116,6 @@ export default function InventoryPage() {
         )}
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-gray-200">
         {(['stock', 'physical-count'] as Tab[]).map(t => (
           <button
@@ -134,119 +132,190 @@ export default function InventoryPage() {
 
       {tab === 'stock' && (
         <Card>
-          {/* Filters */}
           <div className="flex items-center gap-6 px-4 py-3 border-b border-gray-100">
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-gray-400 mr-1">Status</span>
-              <Pill active={filter === 'all'} onClick={() => setFilter('all')}>All ({batches.length})</Pill>
+              <Pill active={filter === 'all'}       onClick={() => setFilter('all')}>All ({batches.length})</Pill>
               <Pill active={filter === 'available'} onClick={() => setFilter('available')}>Available ({availableCount})</Pill>
-              <Pill active={filter === 'contract'} onClick={() => setFilter('contract')}>Contract ({contractCount})</Pill>
+              <Pill active={filter === 'contract'}  onClick={() => setFilter('contract')}>Contract ({contractCount})</Pill>
             </div>
             <div className="w-px h-4 bg-gray-200" />
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-gray-400 mr-1">Location</span>
-              <Pill active={locationFilter === 'all'} onClick={() => setLocationFilter('all')}>All</Pill>
+              <Pill active={locationFilter === 'all'}      onClick={() => setLocationFilter('all')}>All</Pill>
               <Pill active={locationFilter === 'bagtikan'} onClick={() => setLocationFilter('bagtikan')}>Bagtikan ({bagtikanCount})</Pill>
-              <Pill active={locationFilter === 'paco'} onClick={() => setLocationFilter('paco')}>Paco ({pacoCount})</Pill>
+              <Pill active={locationFilter === 'paco'}     onClick={() => setLocationFilter('paco')}>Paco ({pacoCount})</Pill>
             </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch #</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Status</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Location</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Weight</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Received</th>
-                  <th className="px-4 py-2.5" />
+                <tr className="border-b border-gray-100 bg-gray-50/60">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-32">Batch #</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-28">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-32">Location</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-28">On hand</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-28">Weight</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide w-28">Received</th>
+                  <th className="w-16 px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {isLoading && (
-                  <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 text-sm">Loading…</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-16 text-center text-gray-400 text-sm">Loading…</td></tr>
                 )}
                 {!isLoading && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-gray-400 text-sm">
+                    <td colSpan={8} className="px-4 py-16 text-center text-gray-400 text-sm">
                       {filter === 'all' ? 'No batches yet. Use Receiving to log incoming stock.' : `No ${filter} batches.`}
                     </td>
                   </tr>
                 )}
                 {filtered.map(batch => {
                   const contractRef = batch.contract_items
-                  const isEditing = editingId === batch.id
-                  const locDisplay = batch.locations?.name ?? batch.location ?? null
+                  const isEditing   = editingId === batch.id
+                  const locDisplay  = batch.locations?.name ?? batch.location ?? null
+                  const fixed       = isFixedWeightSku(batch.sku_type)
+                  const unit        = skuUnit(batch.sku_type)
+                  const totalKgNum  = parseFloat(batch.weight_kg)
+                  const perUnitKg   = batch.sack_weight_kg ? parseFloat(batch.sack_weight_kg) : null
+
                   return (
-                    <tr key={batch.id} className={`border-b border-gray-100 group ${isEditing ? 'bg-blue-50' : 'hover:bg-gray-50/70'}`}>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-400">{batch.batch_number}</td>
-                      <td className="px-4 py-3 font-semibold text-gray-900">{batch.lots?.name ?? '—'}</td>
-                      <td className="px-4 py-3">
+                    <tr
+                      key={batch.id}
+                      className={`border-b border-gray-100 group transition-colors ${
+                        isEditing ? 'bg-blue-50/60' : 'hover:bg-gray-50/60'
+                      }`}
+                    >
+                      {/* Batch # */}
+                      <td className="px-4 py-4 font-mono text-xs text-gray-400 align-top">
+                        {batch.batch_number}
+                      </td>
+
+                      {/* Product */}
+                      <td className="px-4 py-4 align-top">
+                        <p className="font-semibold text-gray-900 leading-snug">{batch.lots?.name ?? '—'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 capitalize">
+                          {fixed ? '1 kg bags' : 'Commercial'}
+                        </p>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-4 align-top">
                         {contractRef ? (
                           <div>
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-xs font-medium">Contract</span>
-                            <p className="text-xs text-gray-400 mt-0.5">{contractRef.contracts?.contract_number}</p>
+                            <p className="text-xs text-gray-400 mt-1">{contractRef.contracts?.contract_number}</p>
                           </div>
                         ) : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">Available</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+
+                      {/* Location */}
+                      <td className="px-4 py-4 align-top">
                         {locDisplay
                           ? <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 text-xs font-medium">{locDisplay}</span>
                           : <span className="text-gray-300 text-xs">—</span>}
                       </td>
+
                       {isEditing ? (
                         <>
-                          <td className="px-4 py-2.5">
-                            <div className="flex gap-1.5 items-center justify-end">
-                              <input type="number" value={editSacks} onChange={e => setEditSacks(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder={skuUnit(batch.sku_type)} />
-                              <span className="text-gray-400 text-xs">{skuUnit(batch.sku_type)}</span>
-                              {batch.sku_type !== 'retail_1kg' && (
-                                <>
-                                  <span className="text-gray-300 text-xs">×</span>
-                                  <input type="number" value={editSackWeight} onChange={e => setEditSackWeight(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="kg/sk" />
-                                  <span className="text-gray-300 text-xs">kg/sk</span>
-                                </>
+                          {/* Edit: on hand + kg/unit */}
+                          <td className="px-4 py-3 align-middle" colSpan={2}>
+                            <div className="flex flex-wrap gap-2 items-center justify-end">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number" value={editSacks}
+                                  onChange={e => setEditSacks(e.target.value)}
+                                  placeholder="0"
+                                  className="w-16 border border-gray-300 rounded-md px-2 py-1.5 text-xs text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <span className="text-xs text-gray-500">{unit}</span>
+                              </div>
+                              {!fixed && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs text-gray-300">×</span>
+                                  <input
+                                    type="number" value={editSackWeight}
+                                    onChange={e => setEditSackWeight(e.target.value)}
+                                    placeholder="kg/unit"
+                                    className="w-20 border border-gray-300 rounded-md px-2 py-1.5 text-xs text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  />
+                                  <span className="text-xs text-gray-400">kg ea</span>
+                                </div>
                               )}
-                              <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)} className="w-20 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="kg" />
-                              <span className="text-gray-400 text-xs">kg</span>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number" value={editWeight}
+                                  onChange={e => setEditWeight(e.target.value)}
+                                  placeholder="total kg"
+                                  className="w-24 border border-gray-300 rounded-md px-2 py-1.5 text-xs text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <span className="text-xs text-gray-400">kg</span>
+                              </div>
                             </div>
                           </td>
-                          <td className="px-4 py-2.5">
+
+                          {/* Edit: date + actions */}
+                          <td className="px-4 py-3 align-middle">
                             <div className="flex gap-2 items-center">
-                              <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                              <button onClick={() => saveEdit(batch.id)} disabled={editSaving} className="text-xs bg-blue-600 text-white px-2.5 py-1 rounded hover:bg-blue-700 disabled:opacity-50 font-medium">{editSaving ? '…' : 'Save'}</button>
+                              <input
+                                type="date" value={editDate}
+                                onChange={e => setEditDate(e.target.value)}
+                                className="border border-gray-300 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                              <button
+                                onClick={() => saveEdit(batch.id)}
+                                disabled={editSaving}
+                                className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                              >
+                                {editSaving ? '…' : 'Save'}
+                              </button>
                               <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
                             </div>
                           </td>
                         </>
                       ) : (
                         <>
-                          <td className="px-4 py-3 text-right">
-                            <span className="font-semibold text-gray-900 tabular-nums">{Math.round(parseFloat(batch.weight_kg)).toLocaleString()} kg</span>
-                            {batch.sacks != null && (
-                              <div className="text-gray-400 text-xs tabular-nums mt-0.5">
-                                {batch.sacks} {skuUnit(batch.sku_type)}
-                                {batch.sack_weight_kg && (
-                                  <span className="text-gray-300"> × {parseFloat(batch.sack_weight_kg).toFixed(1)} kg</span>
+                          {/* On hand: count + per-unit weight */}
+                          <td className="px-4 py-4 text-right align-top">
+                            {batch.sacks != null ? (
+                              <>
+                                <p className="font-semibold text-gray-900 tabular-nums">{batch.sacks.toLocaleString()} {unit}</p>
+                                {!fixed && perUnitKg != null && (
+                                  <p className="text-xs text-gray-400 tabular-nums mt-0.5">{perUnitKg % 1 === 0 ? perUnitKg : perUnitKg.toFixed(1)} kg ea</p>
                                 )}
-                              </div>
+                              </>
+                            ) : (
+                              <span className="text-gray-300 text-xs">—</span>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">
+
+                          {/* Weight: total kg */}
+                          <td className="px-4 py-4 text-right align-top">
+                            <p className="font-semibold text-gray-900 tabular-nums">
+                              {totalKgNum >= 1000
+                                ? `${(totalKgNum / 1000).toFixed(1)} t`
+                                : `${Math.round(totalKgNum).toLocaleString()} kg`}
+                            </p>
+                          </td>
+
+                          {/* Received */}
+                          <td className="px-4 py-4 text-xs text-gray-400 align-top">
                             {new Date(batch.received_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                           </td>
                         </>
                       )}
-                      <td className="px-3 py-3 text-right">
+
+                      {/* Edit trigger */}
+                      <td className="px-3 py-4 text-right align-top">
                         {!isEditing && (
                           <button
                             onClick={() => startEdit(batch)}
-                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 text-xs px-1.5 py-0.5 rounded transition-all"
-                            title="Edit"
+                            className="opacity-0 group-hover:opacity-100 text-xs text-gray-400 hover:text-blue-600 px-2 py-1 rounded transition-all"
                           >
                             Edit
                           </button>
