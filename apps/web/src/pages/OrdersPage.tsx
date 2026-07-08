@@ -174,6 +174,7 @@ export default function OrdersPage() {
 
   const [showForm, setShowForm] = useState(false)
   const [clientId, setClientId] = useState('')
+  const [contractId, setContractId] = useState('')
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10))
   const [osNumber, setOsNumber] = useState('')
   const [notes, setNotes] = useState('')
@@ -200,6 +201,16 @@ export default function OrdersPage() {
       const { data, error } = await supabase.from('lots').select('id, name, price_per_kg').order('name')
       if (error) throw error
       return data as Lot[]
+    },
+  })
+
+  const { data: clientContracts = [] } = useQuery<{ id: string; contract_number: string }[]>({
+    queryKey: ['contracts-for-client', clientId],
+    enabled: !!clientId,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('contracts').select('id, contract_number').eq('client_id', clientId).eq('status', 'active').order('contract_number')
+      if (error) throw error
+      return data as { id: string; contract_number: string }[]
     },
   })
 
@@ -266,7 +277,7 @@ export default function OrdersPage() {
   }
 
   const resetForm = () => {
-    setClientId(''); setOrderDate(new Date().toISOString().slice(0, 10))
+    setClientId(''); setContractId(''); setOrderDate(new Date().toISOString().slice(0, 10))
     setOsNumber(''); setNotes('')
     setLineItems([{ uid: uid(), lotId: '', batchId: '', kg: '', pricePerKg: '' }])
     setFormError(''); setShowForm(false)
@@ -299,7 +310,7 @@ export default function OrdersPage() {
     }
 
     const { data: orderData, error: orderErr } = await supabase.from('orders')
-      .insert([{ os_number: finalOsNumber, client_id: clientId, status: 'reserved', order_date: orderDate, notes: notes.trim() || null, created_by: profile?.id ?? null }])
+      .insert([{ os_number: finalOsNumber, client_id: clientId, contract_id: contractId || null, status: 'reserved', order_date: orderDate, notes: notes.trim() || null, created_by: profile?.id ?? null }])
       .select()
     if (orderErr) { setFormError(orderErr.message); setSubmitting(false); return }
 
@@ -352,7 +363,7 @@ export default function OrdersPage() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <Label>Client *</Label>
-                  <select value={clientId} onChange={e => setClientId(e.target.value)} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  <select value={clientId} onChange={e => { setClientId(e.target.value); setContractId('') }} className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                     <option value="">Select client…</option>
                     {clients.map(c => <option key={c.id} value={c.id}>{c.company_name}</option>)}
                   </select>
@@ -366,6 +377,16 @@ export default function OrdersPage() {
                   <Input value={osNumber} onChange={e => setOsNumber(e.target.value)} placeholder="OS-06282026-01" />
                 </div>
               </div>
+
+              {clientId && clientContracts.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label>Contract <span className="text-gray-400 font-normal text-xs">optional</span></Label>
+                  <select value={contractId} onChange={e => setContractId(e.target.value)} className="h-9 w-56 rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                    <option value="">No contract</option>
+                    {clientContracts.map(c => <option key={c.id} value={c.id}>{c.contract_number}</option>)}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <div className="flex items-center justify-between mb-2">

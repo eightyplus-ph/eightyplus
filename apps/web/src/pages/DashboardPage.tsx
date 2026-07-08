@@ -9,6 +9,8 @@ interface LocationBreakdown {
   locationName: string
   kg: number
   sacks: number
+  skuType: string
+  sackWeightKg: number | null
 }
 
 interface ProductRow {
@@ -34,11 +36,12 @@ function StatCell({ kg, sacks }: { kg: number; sacks: number }) {
   )
 }
 
-function StatCellSub({ kg, sacks }: { kg: number; sacks: number }) {
+function StatCellSub({ kg, sacks, skuType }: { kg: number; sacks: number; skuType?: string }) {
+  const unitLabel = skuType === 'retail_1kg' ? 'units' : 'sacks'
   return (
     <td className="px-4 py-2 text-right">
       <p className="text-gray-600 text-xs">{Math.round(kg)} kg</p>
-      <p className="text-gray-400 text-xs">{sacks} sacks</p>
+      <p className="text-gray-400 text-xs">{sacks} {unitLabel}</p>
     </td>
   )
 }
@@ -76,7 +79,7 @@ export default function DashboardPage() {
     queryFn: async () => {
       const { data: batches, error: bErr } = await supabase
         .from('batches')
-        .select('lot_id, weight_kg, sacks, lots(name), location_id, locations(name)')
+        .select('lot_id, weight_kg, sacks, sku_type, sack_weight_kg, lots(name), location_id, locations(name)')
       if (bErr) throw bErr
 
       const { data: activeOrders, error: oErr } = await supabase
@@ -109,6 +112,8 @@ export default function DashboardPage() {
         const sacks = (b.sacks as number | null) ?? 0
         const locationId = (b.location_id as string | null) ?? 'unknown'
         const locationName = (b.locations as unknown as { name: string } | null)?.name ?? 'Unknown'
+        const skuType = (b.sku_type as string | null) ?? 'commercial'
+        const sackWeightKg = b.sack_weight_kg ? parseFloat(String(b.sack_weight_kg)) : null
 
         if (!map.has(lotId)) {
           map.set(lotId, { lotId, name, inStockKg: 0, inStockSacks: 0, reservedKg: 0, reservedSacks: 0, availableKg: 0, availableSacks: 0, openOrderCount: 0, dispatchCount: 0, locations: [] })
@@ -119,8 +124,9 @@ export default function DashboardPage() {
         row.inStockSacks += sacks
 
         const lm = locMap.get(lotId)!
-        if (!lm.has(locationId)) lm.set(locationId, { locationId, locationName, kg: 0, sacks: 0 })
-        const loc = lm.get(locationId)!
+        const locKey = `${locationId}::${skuType}::${sackWeightKg ?? ''}`
+        if (!lm.has(locKey)) lm.set(locKey, { locationId, locationName, kg: 0, sacks: 0, skuType, sackWeightKg })
+        const loc = lm.get(locKey)!
         loc.kg += kg
         loc.sacks += sacks
       }
@@ -317,17 +323,17 @@ export default function DashboardPage() {
               )}
               {rows.map(row => {
                 const isExpanded = expanded.has(row.lotId)
-                const hasMultipleLocations = row.locations.length > 1
+                const hasBreakdown = row.locations.length > 1
                 return (
                   <>
                     <tr
                       key={row.lotId}
-                      onClick={() => hasMultipleLocations && toggleExpand(row.lotId)}
-                      className={`border-b border-gray-100 ${hasMultipleLocations ? 'cursor-pointer hover:bg-gray-50' : ''} ${isExpanded ? 'bg-gray-50' : ''}`}
+                      onClick={() => hasBreakdown && toggleExpand(row.lotId)}
+                      className={`border-b border-gray-100 ${hasBreakdown ? 'cursor-pointer hover:bg-gray-50' : ''} ${isExpanded ? 'bg-gray-50' : ''}`}
                     >
                       <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
                         <div className="flex items-center gap-2">
-                          {hasMultipleLocations && (
+                          {hasBreakdown && (
                             <span className="text-gray-400 text-xs select-none shrink-0">{isExpanded ? '▾' : '▸'}</span>
                           )}
                           <span className="truncate" title={row.name}>{row.name}</span>
@@ -339,13 +345,18 @@ export default function DashboardPage() {
                       <CountCell count={row.openOrderCount} />
                       <CountCell count={row.dispatchCount} />
                     </tr>
-                    {isExpanded && row.locations.map(loc => (
-                      <tr key={`${row.lotId}-${loc.locationId}`} className="border-b border-gray-100 bg-gray-50/70">
-                        <td className="pl-10 pr-4 py-2 text-gray-500 text-xs">{loc.locationName}</td>
-                        <StatCellSub kg={loc.kg} sacks={loc.sacks} />
-                        <td colSpan={4} />
-                      </tr>
-                    ))}
+                    {isExpanded && row.locations.map(loc => {
+                      const skuLabel = loc.skuType === 'retail_1kg' ? '1 kg bag' : (loc.sackWeightKg ? `${loc.sackWeightKg} kg/sk` : 'commercial')
+                      return (
+                        <tr key={`${row.lotId}-${loc.locationId}-${loc.skuType}-${loc.sackWeightKg}`} className="border-b border-gray-100 bg-gray-50/70">
+                          <td className="pl-10 pr-4 py-2 text-gray-500 text-xs">
+                            {loc.locationName} <span className="text-gray-400">· {skuLabel}</span>
+                          </td>
+                          <StatCellSub kg={loc.kg} sacks={loc.sacks} skuType={loc.skuType} />
+                          <td colSpan={4} />
+                        </tr>
+                      )
+                    })}
                   </>
                 )
               })}

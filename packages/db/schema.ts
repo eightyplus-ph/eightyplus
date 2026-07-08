@@ -113,6 +113,9 @@ export const orders = pgTable('orders', {
   order_date: date('order_date').notNull(),
   notes: text('notes'),
   scheduled_dispatch_date: date('scheduled_dispatch_date'),
+  payment_proof_url: text('payment_proof_url'),
+  payment_date: date('payment_date'),
+  contract_id: uuid('contract_id').references(() => contracts.id),
   created_by: uuid('created_by').references(() => profiles.id),
   created_at: timestamp('created_at').defaultNow().notNull(),
 })
