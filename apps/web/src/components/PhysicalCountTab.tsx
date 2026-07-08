@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card } from '@/components/ui/card'
+import { skuUnit } from '@/lib/sku'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ interface CountBatch {
   batch_number: string
   weight_kg: string
   sacks: number | null
+  sku_type: string | null
   lots: { name: string } | null
   locations: { name: string } | null
 }
@@ -39,6 +41,7 @@ interface PhysicalCountItem {
   batches: {
     batch_number: string
     sacks: number | null
+    sku_type: string | null
     lots: { name: string } | null
     locations: { name: string } | null
   } | null
@@ -136,7 +139,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, weight_kg, sacks, lots(name), locations(name)')
+        .select('id, batch_number, weight_kg, sacks, sku_type, lots(name), locations(name)')
         .gt('weight_kg', 0)
         .order('received_at', { ascending: false })
       if (error) throw error
@@ -251,7 +254,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                           <td className="px-4 py-2.5 font-medium text-gray-900">{batch.lots?.name ?? '—'}</td>
                           <td className="px-4 py-2.5 text-right">
                             {batch.sacks != null
-                              ? <span className="font-semibold text-gray-800 tabular-nums">{batch.sacks} <span className="text-gray-400 font-normal text-xs">sacks</span></span>
+                              ? <span className="font-semibold text-gray-800 tabular-nums">{batch.sacks} <span className="text-gray-400 font-normal text-xs">{skuUnit(batch.sku_type)}</span></span>
                               : <span className="text-gray-300 text-xs">—</span>}
                           </td>
                           <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
@@ -322,7 +325,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     queryFn: async () => {
       const { data, error } = await supabase
         .from('physical_count_items')
-        .select('id, batch_id, system_kg, counted_kg, batches(batch_number, sacks, lots(name), locations(name))')
+        .select('id, batch_id, system_kg, counted_kg, batches(batch_number, sacks, sku_type, lots(name), locations(name))')
         .eq('physical_count_id', count.id)
       if (error) throw error
       return data as unknown as PhysicalCountItem[]
@@ -434,7 +437,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                           <td className="px-4 py-2.5 font-medium text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
                           <td className="px-4 py-2.5 text-right">
                             {item.batches?.sacks != null
-                              ? <span className="font-semibold text-gray-800 tabular-nums">{item.batches.sacks} <span className="text-gray-400 font-normal text-xs">sacks</span></span>
+                              ? <span className="font-semibold text-gray-800 tabular-nums">{item.batches.sacks} <span className="text-gray-400 font-normal text-xs">{skuUnit(item.batches.sku_type)}</span></span>
                               : <span className="text-gray-300 text-xs">—</span>}
                           </td>
                           <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>

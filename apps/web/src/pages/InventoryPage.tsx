@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
 import PhysicalCountTab from '@/components/PhysicalCountTab'
+import { skuUnit } from '@/lib/sku'
 
 interface ContractRef {
   product_name: string
@@ -14,6 +15,7 @@ interface Batch {
   batch_number: string
   weight_kg: string
   sacks: number | null
+  sku_type: string | null
   lot_id: string | null
   location: string | null
   received_at: string
@@ -56,7 +58,7 @@ export default function InventoryPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, weight_kg, sacks, lot_id, location, received_at, contract_item_id, lots(name), locations(name), contract_items(product_name, contracts(contract_number, title))')
+        .select('id, batch_number, weight_kg, sacks, sku_type, lot_id, location, received_at, contract_item_id, lots(name), locations(name), contract_items(product_name, contracts(contract_number, title))')
         .order('received_at', { ascending: false })
       if (error) throw error
       return data as unknown as Batch[]
@@ -214,7 +216,7 @@ export default function InventoryPage() {
                         <>
                           <td className="px-4 py-3 text-right">
                             <span className="font-semibold text-gray-900 tabular-nums">{Math.round(parseFloat(batch.weight_kg)).toLocaleString()} kg</span>
-                            {batch.sacks ? <span className="text-gray-400 text-xs ml-1.5">{batch.sacks} sk</span> : null}
+                            {batch.sacks ? <span className="text-gray-400 text-xs ml-1.5">{batch.sacks} {skuUnit(batch.sku_type)}</span> : null}
                           </td>
                           <td className="px-4 py-3 text-gray-500 text-xs">
                             {new Date(batch.received_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
