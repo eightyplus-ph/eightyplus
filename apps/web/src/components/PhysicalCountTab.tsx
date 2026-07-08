@@ -130,11 +130,12 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   const [countDate, setCountDate] = useState(existingCount?.count_date ?? todayStr())
   const [performedBy, setPerformedBy] = useState(existingCount?.performed_by ?? '')
   const [notes, setNotes] = useState(existingCount?.notes ?? '')
-  const [quantities, setQuantities] = useState<Record<string, string>>({})
+  const [locationFilter, setLocationFilter] = useState<string>('all')
+  const [unitCounts, setUnitCounts] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  const { data: batches = [], isLoading } = useQuery<CountBatch[]>({
+  const { data: allBatches = [], isLoading } = useQuery<CountBatch[]>({
     queryKey: ['batches-for-count'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -147,14 +148,18 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     },
   })
 
-  const getQty = (batch: CountBatch) =>
-    quantities[batch.id] !== undefined ? quantities[batch.id] : parseFloat(batch.weight_kg).toFixed(2)
+  const locationName = (b: CountBatch) => b.locations?.name ?? 'Untagged'
+  const locations = [...new Set(allBatches.map(locationName))].sort()
+  const batches = locationFilter === 'all' ? allBatches : allBatches.filter(b => locationName(b) === locationFilter)
 
-  const netVariance = batches.reduce((sum, b) => {
-    const counted = parseFloat(getQty(b) || '0')
-    const system = parseFloat(b.weight_kg)
-    return sum + (counted - system)
-  }, 0)
+  // Count physical units (sacks/bags); derive kg from the batch's own average unit weight,
+  // so bags (1 kg each) and commercial sacks both convert without a stored per-sack weight.
+  const unitWeight = (b: CountBatch) => (b.sacks && b.sacks > 0 ? parseFloat(b.weight_kg) / b.sacks : 1)
+  const defaultUnits = (b: CountBatch) => (b.sacks != null ? String(b.sacks) : parseFloat(b.weight_kg).toFixed(2))
+  const getUnits = (b: CountBatch) => (unitCounts[b.id] !== undefined ? unitCounts[b.id] : defaultUnits(b))
+  const countedKg = (b: CountBatch) => parseFloat(getUnits(b) || '0') * unitWeight(b)
+
+  const netVariance = batches.reduce((sum, b) => sum + (countedKg(b) - parseFloat(b.weight_kg)), 0)
 
   const handleSubmit = async () => {
     if (!performedBy.trim()) { setError('Performed by is required.'); return }
@@ -166,7 +171,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
         count_date: countDate,
         performed_by: performedBy.trim(),
         status: 'pending_approval',
-        notes: notes.trim() || null,
+        notes: ((locationFilter === 'all' ? '' : `[${locationFilter}] `) + notes.trim()).trim() || null,
         total_variance_kg: netVariance.toFixed(2),
       }])
       .select()
@@ -177,7 +182,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
       physical_count_id: countId,
       batch_id: b.id,
       system_kg: parseFloat(b.weight_kg).toFixed(2),
-      counted_kg: parseFloat(getQty(b) || b.weight_kg).toFixed(2),
+      counted_kg: countedKg(b).toFixed(2),
     }))
 
     const { error: itemsErr } = await supabase.from('physical_count_items').insert(items)
@@ -188,9 +193,8 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   }
 
   const changedCount = batches.filter(b => {
-    const qty = quantities[b.id]
-    if (qty === undefined) return false
-    return Math.abs(parseFloat(qty) - parseFloat(b.weight_kg)) >= 0.01
+    if (unitCounts[b.id] === undefined) return false
+    return Math.abs(countedKg(b) - parseFloat(b.weight_kg)) >= 0.01
   }).length
 
   return (
@@ -213,6 +217,23 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
         </div>
         <button onClick={onCancel} className="text-sm text-gray-400 hover:text-gray-600 mt-1">Cancel</button>
       </div>
+
+      {locations.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {['all', ...locations].map(loc => (
+            <button
+              key={loc}
+              type="button"
+              onClick={() => setLocationFilter(loc)}
+              className={`px-3 py-1 text-xs font-medium rounded-full border transition-colors ${
+                locationFilter === loc ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+              }`}
+            >
+              {loc === 'all' ? 'All locations' : loc}
+            </button>
+          ))}
+        </div>
+      )}
 
       <Card>
         <div className="overflow-x-auto">
@@ -244,33 +265,37 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                       </td>
                     </tr>
                     {locBatches.map(batch => {
-                      const counted = parseFloat(getQty(batch) || '0')
                       const system = parseFloat(batch.weight_kg)
-                      const variance = counted - system
-                      const isDirty = quantities[batch.id] !== undefined && Math.abs(variance) >= 0.01
+                      const variance = countedKg(batch) - system
+                      const isDirty = unitCounts[batch.id] !== undefined && Math.abs(variance) >= 0.01
+                      const unit = skuUnit(batch.sku_type)
                       return (
                         <tr key={batch.id} className={`border-b border-gray-100 ${isDirty ? 'bg-amber-50/60' : ''}`}>
                           <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
                           <td className="px-4 py-2.5 font-medium text-gray-900">{batch.lots?.name ?? '—'}</td>
                           <td className="px-4 py-2.5 text-right">
                             {batch.sacks != null
-                              ? <span className="font-semibold text-gray-800 tabular-nums">{batch.sacks} <span className="text-gray-400 font-normal text-xs">{skuUnit(batch.sku_type)}</span></span>
+                              ? <span className="font-semibold text-gray-800 tabular-nums">{batch.sacks} <span className="text-gray-400 font-normal text-xs">{unit}</span></span>
                               : <span className="text-gray-300 text-xs">—</span>}
                           </td>
                           <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
                           <td className="px-4 py-2.5 text-right">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={getQty(batch)}
-                              onChange={e => setQuantities(prev => ({ ...prev, [batch.id]: e.target.value }))}
-                              className={`w-24 text-right rounded-md border px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 ${
-                                isDirty
-                                  ? 'border-amber-400 bg-amber-50 focus:ring-amber-400'
-                                  : 'border-gray-200 focus:ring-blue-500'
-                              }`}
-                            />
+                            <div className="flex flex-col items-end gap-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  value={getUnits(batch)}
+                                  onChange={e => setUnitCounts(prev => ({ ...prev, [batch.id]: e.target.value }))}
+                                  className={`w-20 text-right rounded-md border px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 ${
+                                    isDirty ? 'border-amber-400 bg-amber-50 focus:ring-amber-400' : 'border-gray-200 focus:ring-blue-500'
+                                  }`}
+                                />
+                                <span className="text-gray-400 text-xs w-8 text-left">{unit}</span>
+                              </div>
+                              <span className="text-gray-400 text-xs tabular-nums">= {countedKg(batch).toFixed(2)} kg</span>
+                            </div>
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             <VarianceBadge variance={variance} />
