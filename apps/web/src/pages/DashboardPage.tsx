@@ -376,8 +376,10 @@ export default function DashboardPage() {
                       <CountCell count={row.openOrderCount} />
                       <CountCell count={row.dispatchCount} />
                     </tr>
-                    {isExpanded && row.locations.map(loc => {
-                      const skuLabel = loc.skuType === 'retail_1kg' ? '1 kg bags' : (loc.sackWeightKg ? `${loc.sackWeightKg} kg/sk` : 'commercial')
+                    {isExpanded && row.locations.filter(loc => loc.kg > 0).map(loc => {
+                      const derivedKgPerSk = (loc.sacks > 0 && loc.skuType !== 'retail_1kg') ? Math.round(loc.kg / loc.sacks) : null
+                      const displayKgPerSk = loc.sackWeightKg ? Math.round(loc.sackWeightKg) : derivedKgPerSk
+                      const skuLabel = loc.skuType === 'retail_1kg' ? '1 kg bags' : (displayKgPerSk ? `${displayKgPerSk} kg/sk` : 'commercial')
                       return (
                         <tr key={`${row.lotId}-${loc.locationId}-${loc.skuType}-${loc.sackWeightKg}`} className="border-b border-gray-100 bg-gray-50/40">
                           <td className="pl-12 pr-4 py-2.5 align-top">
