@@ -98,7 +98,7 @@ function groupByLocProduct<T>(
 
 // ─── Batch row override state ─────────────────────────────────────────────────
 
-interface RowOverride { included?: boolean; sacks?: string; sackWeightKg?: string }
+interface RowOverride { included?: boolean; sacks?: string; sackWeightKg?: string; extraBags?: string }
 type Overrides = Record<string, RowOverride>
 
 function getRow(batch: CountBatch, overrides: Overrides) {
@@ -108,7 +108,16 @@ function getRow(batch: CountBatch, overrides: Overrides) {
     included:     o.included     ?? true,
     sacks:        o.sacks        ?? (batch.sacks != null ? String(batch.sacks) : ''),
     sackWeightKg: fixed ? '1' : (o.sackWeightKg ?? (batch.sack_weight_kg ?? '')),
+    extraBags:    o.extraBags    ?? '',
   }
+}
+
+function computeTotalKg(sacks: string, sackWeightKg: string, extraBags: string): number {
+  const s = parseFloat(sacks)
+  const w = parseFloat(sackWeightKg)
+  const sacksKg = s > 0 && w > 0 ? s * w : 0
+  const bagsKg = Math.max(0, parseInt(extraBags) || 0)
+  return sacksKg + bagsKg
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -196,7 +205,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
 
   const netVariance = includedBatches.reduce((sum, b) => {
     const row = getRow(b, overrides)
-    return sum + computeKg(row.sacks, row.sackWeightKg) - parseFloat(b.weight_kg)
+    return sum + computeTotalKg(row.sacks, row.sackWeightKg, row.extraBags) - parseFloat(b.weight_kg)
   }, 0)
 
   const handleSubmit = async () => {
@@ -224,7 +233,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
         physical_count_id: countId,
         batch_id: b.id,
         system_kg: parseFloat(b.weight_kg).toFixed(2),
-        counted_kg: computeKg(row.sacks, row.sackWeightKg).toFixed(2),
+        counted_kg: computeTotalKg(row.sacks, row.sackWeightKg, row.extraBags).toFixed(2),
         counted_sacks: parseInt(row.sacks) || null,
         counted_sack_weight_kg: fixed ? 1 : (parseFloat(row.sackWeightKg) || null),
       }
@@ -267,8 +276,9 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                 <th className="w-8 px-3 py-2.5" />
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch · SKU</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sacks</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / unit</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">+ 1kg bags</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">= Counted kg</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
@@ -304,10 +314,10 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                         const row = getRow(batch, overrides)
                         const fixed = isFixedWeightSku(batch.sku_type)
                         const unit = skuUnit(batch.sku_type)
-                        const countedKg = computeKg(row.sacks, row.sackWeightKg)
+                        const totalKg = computeTotalKg(row.sacks, row.sackWeightKg, row.extraBags)
                         const systemKg = parseFloat(batch.weight_kg)
-                        const variance = countedKg > 0 ? countedKg - systemKg : 0
-                        const hasVariance = countedKg > 0 && Math.abs(variance) >= 0.01
+                        const variance = totalKg > 0 ? totalKg - systemKg : 0
+                        const hasVariance = totalKg > 0 && Math.abs(variance) >= 0.01
                         return (
                           <tr
                             key={batch.id}
@@ -354,13 +364,28 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                                 />
                               )}
                             </td>
+                            {/* Extra 1kg bags — only for commercial batches */}
+                            <td className="px-3 py-2 text-right">
+                              {fixed ? (
+                                <span className="text-gray-200 text-xs">—</span>
+                              ) : (
+                                <input
+                                  type="number" min="0" step="1"
+                                  value={row.extraBags}
+                                  onChange={e => setOverride(batch.id, 'extraBags', e.target.value)}
+                                  disabled={!row.included}
+                                  placeholder="0"
+                                  className={inputCls}
+                                />
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-right font-medium text-gray-900 tabular-nums">
-                              {row.included && countedKg > 0
-                                ? `${countedKg.toFixed(2)} kg`
+                              {row.included && totalKg > 0
+                                ? `${totalKg.toFixed(2)} kg`
                                 : <span className="text-gray-300">—</span>}
                             </td>
                             <td className="px-3 py-2 text-right">
-                              {row.included && countedKg > 0
+                              {row.included && totalKg > 0
                                 ? <GapBadge gap={variance} />
                                 : <span className="text-gray-300">—</span>}
                             </td>
@@ -375,7 +400,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             {includedBatches.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td colSpan={6} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
+                  <td colSpan={7} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
                     Net variance · {includedBatches.length} batch{includedBatches.length !== 1 ? 'es' : ''}
                   </td>
                   <td className="px-3 py-3 text-right"><GapBadge gap={netVariance} /></td>
@@ -396,7 +421,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
 
 // ─── Approval View ────────────────────────────────────────────────────────────
 
-interface ItemEdit { sacks: string; sackWeightKg: string }
+interface ItemEdit { sacks: string; sackWeightKg: string; extraBags: string }
 type ItemEdits = Record<string, ItemEdit>
 
 function getItemEdit(item: PhysicalCountItem, edits: ItemEdits): ItemEdit {
@@ -405,13 +430,14 @@ function getItemEdit(item: PhysicalCountItem, edits: ItemEdits): ItemEdit {
   return {
     sacks:        item.counted_sacks != null ? String(item.counted_sacks) : '',
     sackWeightKg: fixed ? '1' : (item.counted_sack_weight_kg ?? ''),
+    extraBags:    '',
   }
 }
 
 function getItemCountedKg(item: PhysicalCountItem, edits: ItemEdits): number {
   const edit = getItemEdit(item, edits)
-  const fromEdit = computeKg(edit.sacks, edit.sackWeightKg)
-  if (fromEdit > 0) return fromEdit
+  const total = computeTotalKg(edit.sacks, edit.sackWeightKg, edit.extraBags)
+  if (total > 0) return total
   return parseFloat(item.counted_kg)
 }
 
@@ -444,7 +470,10 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   const setEdit = (id: string, field: keyof ItemEdit, value: string) =>
-    setEdits(prev => ({ ...prev, [id]: { ...getItemEdit(items.find(i => i.id === id)!, prev), [field]: value } }))
+    setEdits(prev => ({
+      ...prev,
+      [id]: { ...getItemEdit(items.find(i => i.id === id)!, prev), [field]: value },
+    }))
 
   const handleApproveSelected = async () => {
     if (!reviewedBy.trim()) { setError('Reviewed by is required.'); return }
@@ -530,7 +559,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     return grouped.map(([locName, products]) => (
       <Fragment key={`${locName}-${isPending}`}>
         <tr>
-          <td colSpan={9} className="px-4 pt-4 pb-1.5">
+          <td colSpan={10} className="px-4 pt-4 pb-1.5">
             <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
             <div className="mt-1 h-px bg-gray-300" />
           </td>
@@ -538,7 +567,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         {products.map(([productName, prodItems]) => (
           <Fragment key={productName}>
             <tr>
-              <td colSpan={9} className="px-4 pt-3 pb-1 pl-6">
+              <td colSpan={10} className="px-4 pt-3 pb-1 pl-6">
                 <span className="text-sm font-semibold text-gray-800">{productName}</span>
                 {prodItems.length > 1 && (
                   <span className="ml-2 text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">
@@ -601,12 +630,26 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                             />
                         }
                       </td>
+                      {/* Extra 1kg bags — only for commercial batches */}
+                      <td className="px-3 py-2 text-right">
+                        {fixed ? (
+                          <span className="text-gray-200 text-xs">—</span>
+                        ) : (
+                          <input
+                            type="number" min="0" step="1"
+                            value={edit.extraBags}
+                            onChange={e => setEdit(item.id, 'extraBags', e.target.value)}
+                            placeholder="0"
+                            className={inputCls}
+                          />
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-right font-medium tabular-nums text-gray-900">
                         {countedKg > 0 ? `${countedKg.toFixed(2)} kg` : <span className="text-gray-300">—</span>}
                       </td>
                     </>
                   ) : (
-                    <td colSpan={3} className="px-3 py-2 text-right tabular-nums text-xs text-gray-600">
+                    <td colSpan={4} className="px-3 py-2 text-right tabular-nums text-xs text-gray-600">
                       {item.counted_sacks != null ? <>{item.counted_sacks} {unit} · </> : ''}{parseFloat(item.counted_kg).toFixed(2)} kg
                     </td>
                   )}
@@ -645,8 +688,9 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
               <tr className="border-b border-gray-100">
                 <th className="w-8 px-4 py-2.5" />
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch · SKU</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sacks</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / unit</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">+ 1kg bags</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">= kg</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">At count</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Current</th>
@@ -655,12 +699,12 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
 
               {pendingItems.length > 0 && (
                 <>
                   <tr>
-                    <td colSpan={9} className="px-4 pt-3 pb-1">
+                    <td colSpan={10} className="px-4 pt-3 pb-1">
                       <div className="flex items-center gap-3">
                         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pending</span>
                         <button onClick={() => setSelected(new Set(pendingItems.map(i => i.id)))} className="text-xs text-blue-600 hover:underline">Select all</button>
@@ -675,7 +719,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
               {approvedItems.length > 0 && (
                 <>
                   <tr>
-                    <td colSpan={9} className="px-4 pt-5 pb-1">
+                    <td colSpan={10} className="px-4 pt-5 pb-1">
                       <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Approved</span>
                     </td>
                   </tr>
