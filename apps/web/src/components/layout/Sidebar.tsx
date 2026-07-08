@@ -17,6 +17,7 @@ const ALL_NAV: NavLink[] = [
   { label: 'Inventory',     href: '/inventory',  moduleKey: 'inventory' },
   { label: 'Receiving',     href: '/receiving',  moduleKey: 'receiving',  defaultRoles: ['admin', 'ops'] },
   { label: 'Transfers',     href: '/transfers',  moduleKey: 'transfers',  defaultRoles: ['admin', 'ops'] },
+  { label: 'Repack',        href: '/repack',     moduleKey: 'repack',     defaultRoles: ['admin', 'ops'] },
   { label: 'Product Names', href: '/lots',       moduleKey: 'lots' },
   { label: 'Locations',     href: '/locations',  moduleKey: 'locations',  defaultRoles: ['admin', 'ops', 'manager'] },
   { label: 'Clients',       href: '/clients',    moduleKey: 'clients',    defaultRoles: ['admin', 'manager', 'sales'] },
