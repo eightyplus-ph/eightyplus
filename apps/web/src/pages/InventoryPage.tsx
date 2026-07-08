@@ -198,8 +198,8 @@ export default function InventoryPage() {
                         <>
                           <td className="px-4 py-2.5">
                             <div className="flex gap-1.5 items-center justify-end">
-                              <input type="number" value={editSacks} onChange={e => setEditSacks(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="sacks" />
-                              <span className="text-gray-400 text-xs">sk</span>
+                              <input type="number" value={editSacks} onChange={e => setEditSacks(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder={skuUnit(batch.sku_type)} />
+                              <span className="text-gray-400 text-xs">{skuUnit(batch.sku_type)}</span>
                               <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)} className="w-20 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="kg" />
                               <span className="text-gray-400 text-xs">kg</span>
                             </div>
