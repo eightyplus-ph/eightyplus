@@ -67,6 +67,37 @@ function GapBadge({ gap }: { gap: number }) {
   return <span className={cls}>{gap > 0 ? '+' : ''}{gap.toFixed(2)} kg</span>
 }
 
+function skuLabel(sku: string | null): string {
+  if (sku === 'retail_1kg') return '1 kg bags'
+  return 'Commercial'
+}
+
+function computeKg(sacks: string, sackWeightKg: string): number {
+  const s = parseFloat(sacks)
+  const w = parseFloat(sackWeightKg)
+  return s > 0 && w > 0 ? s * w : 0
+}
+
+// Group an array by two keys: location → product name → items[]
+function groupByLocProduct<T>(
+  items: T[],
+  getLoc: (i: T) => string,
+  getProduct: (i: T) => string,
+): [string, [string, T[]][]][] {
+  const locMap = new Map<string, Map<string, T[]>>()
+  for (const item of items) {
+    const loc = getLoc(item)
+    const prod = getProduct(item)
+    if (!locMap.has(loc)) locMap.set(loc, new Map())
+    const prodMap = locMap.get(loc)!
+    if (!prodMap.has(prod)) prodMap.set(prod, [])
+    prodMap.get(prod)!.push(item)
+  }
+  return Array.from(locMap.entries()).map(([loc, pm]) => [loc, Array.from(pm.entries())])
+}
+
+// ─── Batch row override state ─────────────────────────────────────────────────
+
 interface RowOverride { included?: boolean; sacks?: string; sackWeightKg?: string }
 type Overrides = Record<string, RowOverride>
 
@@ -78,12 +109,6 @@ function getRow(batch: CountBatch, overrides: Overrides) {
     sacks:        o.sacks        ?? (batch.sacks != null ? String(batch.sacks) : ''),
     sackWeightKg: fixed ? '1' : (o.sackWeightKg ?? (batch.sack_weight_kg ?? '')),
   }
-}
-
-function computeKg(sacks: string, sackWeightKg: string): number {
-  const s = parseFloat(sacks)
-  const w = parseFloat(sackWeightKg)
-  return s > 0 && w > 0 ? s * w : 0
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -158,14 +183,14 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     },
   })
 
-  const setRow = (batchId: string, field: keyof RowOverride, value: string | boolean) =>
+  const setOverride = (batchId: string, field: keyof RowOverride, value: string | boolean) =>
     setOverrides(prev => ({ ...prev, [batchId]: { ...(prev[batchId] ?? {}), [field]: value } }))
 
-  const grouped = batches.reduce<Record<string, CountBatch[]>>((acc, b) => {
-    const loc = b.locations?.name ?? 'Untagged'
-    ;(acc[loc] ??= []).push(b)
-    return acc
-  }, {})
+  const grouped = groupByLocProduct(
+    batches,
+    b => b.locations?.name ?? 'Untagged',
+    b => b.lots?.name ?? 'Unknown product',
+  )
 
   const includedBatches = batches.filter(b => getRow(b, overrides).included)
 
@@ -212,6 +237,8 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     setSubmitting(false)
   }
 
+  const inputCls = "w-20 text-right rounded-md border border-gray-200 px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-300"
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -238,8 +265,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="w-8 px-3 py-2.5" />
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch</th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch · SKU</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / unit</th>
@@ -248,89 +274,109 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>}
-              {Object.entries(grouped).map(([locName, locBatches]) => (
+              {isLoading && (
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">Loading batches…</td></tr>
+              )}
+              {grouped.map(([locName, products]) => (
                 <Fragment key={locName}>
+                  {/* Location header */}
                   <tr>
-                    <td colSpan={8} className="px-3 pt-4 pb-1.5">
+                    <td colSpan={7} className="px-3 pt-5 pb-1.5">
                       <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
-                      <div className="mt-1 h-px bg-gray-200" />
+                      <div className="mt-1 h-px bg-gray-300" />
                     </td>
                   </tr>
-                  {locBatches.map(batch => {
-                    const row = getRow(batch, overrides)
-                    const fixed = isFixedWeightSku(batch.sku_type)
-                    const unit = skuUnit(batch.sku_type)
-                    const countedKg = computeKg(row.sacks, row.sackWeightKg)
-                    const systemKg = parseFloat(batch.weight_kg)
-                    const variance = countedKg > 0 ? countedKg - systemKg : 0
-                    const hasVariance = countedKg > 0 && Math.abs(variance) >= 0.01
-                    return (
-                      <tr
-                        key={batch.id}
-                        className={`border-b border-gray-100 ${!row.included ? 'opacity-35' : hasVariance ? 'bg-amber-50/50' : ''}`}
-                      >
-                        <td className="px-3 py-2.5 text-center">
-                          <input
-                            type="checkbox"
-                            checked={row.included}
-                            onChange={() => setRow(batch.id, 'included', !row.included)}
-                            className="rounded border-gray-300"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
-                        <td className="px-3 py-2.5 font-medium text-gray-900">
-                          {batch.lots?.name ?? '—'}
-                          {fixed && <span className="ml-1.5 text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">1 kg bags</span>}
-                        </td>
-                        <td className="px-3 py-2.5 text-right text-gray-500 tabular-nums text-xs">
-                          {batch.sacks != null ? <>{batch.sacks} {unit} · </> : ''}{systemKg.toFixed(0)} kg
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <input
-                            type="number" min="0" step="1"
-                            value={row.sacks}
-                            onChange={e => setRow(batch.id, 'sacks', e.target.value)}
-                            disabled={!row.included}
-                            placeholder="—"
-                            className="w-20 text-right rounded-md border border-gray-200 px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-300"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {fixed ? (
-                            <span className="text-xs text-gray-400 tabular-nums">1.000</span>
-                          ) : (
-                            <input
-                              type="number" min="0" step="0.001"
-                              value={row.sackWeightKg}
-                              onChange={e => setRow(batch.id, 'sackWeightKg', e.target.value)}
-                              disabled={!row.included}
-                              placeholder="—"
-                              className="w-20 text-right rounded-md border border-gray-200 px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-300"
-                            />
+                  {products.map(([productName, batches]) => (
+                    <Fragment key={productName}>
+                      {/* Product name row */}
+                      <tr>
+                        <td colSpan={7} className="px-3 pt-3 pb-1 pl-5">
+                          <span className="text-sm font-semibold text-gray-800">{productName}</span>
+                          {batches.length > 1 && (
+                            <span className="ml-2 text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">
+                              {batches.length} batches
+                            </span>
                           )}
                         </td>
-                        <td className="px-3 py-2.5 text-right font-medium text-gray-900 tabular-nums">
-                          {row.included && countedKg > 0
-                            ? `${countedKg.toFixed(2)} kg`
-                            : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {row.included && countedKg > 0
-                            ? <GapBadge gap={variance} />
-                            : <span className="text-gray-300">—</span>}
-                        </td>
                       </tr>
-                    )
-                  })}
+                      {/* Batch rows under this product */}
+                      {batches.map(batch => {
+                        const row = getRow(batch, overrides)
+                        const fixed = isFixedWeightSku(batch.sku_type)
+                        const unit = skuUnit(batch.sku_type)
+                        const countedKg = computeKg(row.sacks, row.sackWeightKg)
+                        const systemKg = parseFloat(batch.weight_kg)
+                        const variance = countedKg > 0 ? countedKg - systemKg : 0
+                        const hasVariance = countedKg > 0 && Math.abs(variance) >= 0.01
+                        return (
+                          <tr
+                            key={batch.id}
+                            className={`border-b border-gray-100 ${!row.included ? 'opacity-35' : hasVariance ? 'bg-amber-50/50' : ''}`}
+                          >
+                            <td className="px-3 py-2 text-center pl-5">
+                              <input
+                                type="checkbox"
+                                checked={row.included}
+                                onChange={() => setOverride(batch.id, 'included', !row.included)}
+                                className="rounded border-gray-300"
+                              />
+                            </td>
+                            <td className="px-3 py-2 pl-6">
+                              <span className="font-mono text-xs text-gray-400">{batch.batch_number}</span>
+                              <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full font-medium ${fixed ? 'text-purple-600 bg-purple-50' : 'text-gray-500 bg-gray-100'}`}>
+                                {skuLabel(batch.sku_type)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-500 tabular-nums text-xs">
+                              {batch.sacks != null ? <>{batch.sacks} {unit} · </> : ''}{systemKg.toFixed(0)} kg
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number" min="0" step="1"
+                                value={row.sacks}
+                                onChange={e => setOverride(batch.id, 'sacks', e.target.value)}
+                                disabled={!row.included}
+                                placeholder="—"
+                                className={inputCls}
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {fixed ? (
+                                <span className="text-xs text-gray-400 tabular-nums">1.000</span>
+                              ) : (
+                                <input
+                                  type="number" min="0" step="0.001"
+                                  value={row.sackWeightKg}
+                                  onChange={e => setOverride(batch.id, 'sackWeightKg', e.target.value)}
+                                  disabled={!row.included}
+                                  placeholder="—"
+                                  className={inputCls}
+                                />
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-gray-900 tabular-nums">
+                              {row.included && countedKg > 0
+                                ? `${countedKg.toFixed(2)} kg`
+                                : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {row.included && countedKg > 0
+                                ? <GapBadge gap={variance} />
+                                : <span className="text-gray-300">—</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </Fragment>
+                  ))}
                 </Fragment>
               ))}
             </tbody>
             {includedBatches.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td colSpan={7} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
-                    Net variance · {includedBatches.length} product{includedBatches.length !== 1 ? 's' : ''}
+                  <td colSpan={6} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
+                    Net variance · {includedBatches.length} batch{includedBatches.length !== 1 ? 'es' : ''}
                   </td>
                   <td className="px-3 py-3 text-right"><GapBadge gap={netVariance} /></td>
                 </tr>
@@ -342,7 +388,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
 
       {error && <p className="text-sm text-red-600">{error}</p>}
       <Button onClick={handleSubmit} disabled={submitting || isLoading || includedBatches.length === 0}>
-        {submitting ? 'Submitting…' : `Submit ${includedBatches.length} product${includedBatches.length !== 1 ? 's' : ''} for Approval`}
+        {submitting ? 'Submitting…' : `Submit ${includedBatches.length} batch${includedBatches.length !== 1 ? 'es' : ''} for Approval`}
       </Button>
     </div>
   )
@@ -350,10 +396,30 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
 
 // ─── Approval View ────────────────────────────────────────────────────────────
 
+interface ItemEdit { sacks: string; sackWeightKg: string }
+type ItemEdits = Record<string, ItemEdit>
+
+function getItemEdit(item: PhysicalCountItem, edits: ItemEdits): ItemEdit {
+  if (edits[item.id]) return edits[item.id]
+  const fixed = isFixedWeightSku(item.batches?.sku_type)
+  return {
+    sacks:        item.counted_sacks != null ? String(item.counted_sacks) : '',
+    sackWeightKg: fixed ? '1' : (item.counted_sack_weight_kg ?? ''),
+  }
+}
+
+function getItemCountedKg(item: PhysicalCountItem, edits: ItemEdits): number {
+  const edit = getItemEdit(item, edits)
+  const fromEdit = computeKg(edit.sacks, edit.sackWeightKg)
+  if (fromEdit > 0) return fromEdit
+  return parseFloat(item.counted_kg)
+}
+
 function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => void }) {
   const queryClient = useQueryClient()
   const [reviewedBy, setReviewedBy] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [edits, setEdits] = useState<ItemEdits>({})
   const [submitting, setSubmitting] = useState(false)
   const [closing, setClosing] = useState(false)
   const [error, setError] = useState('')
@@ -377,6 +443,9 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
   const toggle = (id: string) =>
     setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
+  const setEdit = (id: string, field: keyof ItemEdit, value: string) =>
+    setEdits(prev => ({ ...prev, [id]: { ...getItemEdit(items.find(i => i.id === id)!, prev), [field]: value } }))
+
   const handleApproveSelected = async () => {
     if (!reviewedBy.trim()) { setError('Reviewed by is required.'); return }
     if (selected.size === 0) { setError('Select at least one item.'); return }
@@ -387,9 +456,24 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     const txNote = `Physical count ${count.count_date} by ${count.performed_by}, approved by ${reviewedBy.trim()}`
 
     for (const item of toApprove) {
+      const edit = getItemEdit(item, edits)
+      const fixed = isFixedWeightSku(item.batches?.sku_type)
+      const editedKg = computeKg(edit.sacks, edit.sackWeightKg)
+      const finalCountedKg = editedKg > 0 ? editedKg : parseFloat(item.counted_kg)
+      const finalSacks = parseInt(edit.sacks) || item.counted_sacks
+      const finalSackWeight = fixed ? 1 : (parseFloat(edit.sackWeightKg) || (item.counted_sack_weight_kg ? parseFloat(item.counted_sack_weight_kg) : null))
+
+      // Persist edits back to the item row
+      if (edits[item.id]) {
+        await supabase.from('physical_count_items').update({
+          counted_kg:            finalCountedKg.toFixed(2),
+          counted_sacks:         finalSacks,
+          counted_sack_weight_kg: finalSackWeight,
+        }).eq('id', item.id)
+      }
+
       const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
-      const countedKg = parseFloat(item.counted_kg)
-      const delta     = countedKg - currentKg
+      const delta = finalCountedKg - currentKg
 
       if (Math.abs(delta) >= 0.01) {
         await supabase.from('inventory_transactions').insert([{
@@ -402,9 +486,9 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
       }
 
       await supabase.from('batches').update({
-        weight_kg: countedKg,
-        ...(item.counted_sacks != null && { sacks: item.counted_sacks }),
-        ...(item.counted_sack_weight_kg != null && { sack_weight_kg: parseFloat(item.counted_sack_weight_kg) }),
+        weight_kg: finalCountedKg,
+        ...(finalSacks != null    && { sacks: finalSacks }),
+        ...(finalSackWeight != null && { sack_weight_kg: finalSackWeight }),
       }).eq('id', item.batch_id)
 
       await supabase.from('physical_count_items').update({
@@ -417,6 +501,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     await refetch()
     setSelected(new Set())
+    setEdits({})
     setSubmitting(false)
   }
 
@@ -433,51 +518,110 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     onDone()
   }
 
-  const renderItems = (rows: PhysicalCountItem[], isPending: boolean) => {
-    const grouped = rows.reduce<Record<string, PhysicalCountItem[]>>((acc, i) => {
-      const loc = i.batches?.locations?.name ?? 'Untagged'
-      ;(acc[loc] ??= []).push(i)
-      return acc
-    }, {})
+  const inputCls = "w-20 text-right rounded-md border border-gray-200 px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500"
 
-    return Object.entries(grouped).map(([locName, locItems]) => (
+  const renderSection = (rows: PhysicalCountItem[], isPending: boolean) => {
+    const grouped = groupByLocProduct(
+      rows,
+      i => i.batches?.locations?.name ?? 'Untagged',
+      i => i.batches?.lots?.name ?? 'Unknown product',
+    )
+
+    return grouped.map(([locName, products]) => (
       <Fragment key={`${locName}-${isPending}`}>
         <tr>
-          <td colSpan={8} className="px-4 pt-4 pb-1.5">
+          <td colSpan={9} className="px-4 pt-4 pb-1.5">
             <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
-            <div className="mt-1 h-px bg-gray-200" />
+            <div className="mt-1 h-px bg-gray-300" />
           </td>
         </tr>
-        {locItems.map(item => {
-          const currentKg  = parseFloat(item.batches?.weight_kg ?? item.system_kg)
-          const countedKg  = parseFloat(item.counted_kg)
-          const liveGap    = countedKg - currentKg
-          const unit       = skuUnit(item.batches?.sku_type)
-          const isSelected = selected.has(item.id)
-          return (
-            <tr
-              key={item.id}
-              className={`border-b border-gray-100 ${isPending && isSelected ? 'bg-blue-50/40' : ''} ${!isPending ? 'opacity-55' : ''}`}
-            >
-              <td className="px-4 py-2.5 text-center">
-                {isPending
-                  ? <input type="checkbox" checked={isSelected} onChange={() => toggle(item.id)} className="rounded border-gray-300" />
-                  : <span className="text-green-500 text-xs">✓</span>}
-              </td>
-              <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{item.batches?.batch_number ?? '—'}</td>
-              <td className="px-4 py-2.5 font-medium text-gray-900">{item.batches?.lots?.name ?? '—'}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-gray-700">
-                {item.counted_sacks != null ? <>{item.counted_sacks} {unit} · </> : ''}{countedKg.toFixed(2)} kg
-              </td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-gray-400">{parseFloat(item.system_kg).toFixed(2)}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums text-xs font-medium text-gray-700">{currentKg.toFixed(2)}</td>
-              <td className="px-4 py-2.5 text-right"><GapBadge gap={liveGap} /></td>
-              <td className="px-4 py-2.5 text-xs text-gray-400">
-                {!isPending && item.approved_by ? `by ${item.approved_by}` : ''}
+        {products.map(([productName, prodItems]) => (
+          <Fragment key={productName}>
+            <tr>
+              <td colSpan={9} className="px-4 pt-3 pb-1 pl-6">
+                <span className="text-sm font-semibold text-gray-800">{productName}</span>
+                {prodItems.length > 1 && (
+                  <span className="ml-2 text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">
+                    {prodItems.length} batches
+                  </span>
+                )}
               </td>
             </tr>
-          )
-        })}
+            {prodItems.map(item => {
+              const fixed = isFixedWeightSku(item.batches?.sku_type)
+              const unit = skuUnit(item.batches?.sku_type)
+              const edit = getItemEdit(item, edits)
+              const countedKg = getItemCountedKg(item, edits)
+              const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
+              const liveGap = countedKg - currentKg
+              const isSelected = selected.has(item.id)
+              const isDirty = !!edits[item.id]
+
+              return (
+                <tr
+                  key={item.id}
+                  className={`border-b border-gray-100 ${isPending && isSelected ? 'bg-blue-50/40' : ''} ${!isPending ? 'opacity-55' : ''}`}
+                >
+                  <td className="px-4 py-2 text-center pl-6">
+                    {isPending
+                      ? <input type="checkbox" checked={isSelected} onChange={() => toggle(item.id)} className="rounded border-gray-300" />
+                      : <span className="text-green-500 text-xs">✓</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-xs text-gray-400">{item.batches?.batch_number ?? '—'}</span>
+                    <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full font-medium ${fixed ? 'text-purple-600 bg-purple-50' : 'text-gray-500 bg-gray-100'}`}>
+                      {skuLabel(item.batches?.sku_type ?? null)}
+                    </span>
+                    {isDirty && isPending && (
+                      <span className="ml-1 text-xs text-amber-600 font-medium">edited</span>
+                    )}
+                  </td>
+
+                  {/* Counted — editable for pending items */}
+                  {isPending ? (
+                    <>
+                      <td className="px-3 py-2 text-right">
+                        <input
+                          type="number" min="0" step="1"
+                          value={edit.sacks}
+                          onChange={e => setEdit(item.id, 'sacks', e.target.value)}
+                          placeholder={item.counted_sacks != null ? String(item.counted_sacks) : '—'}
+                          className={inputCls}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {fixed
+                          ? <span className="text-xs text-gray-400 tabular-nums">1.000</span>
+                          : <input
+                              type="number" min="0" step="0.001"
+                              value={edit.sackWeightKg}
+                              onChange={e => setEdit(item.id, 'sackWeightKg', e.target.value)}
+                              placeholder={item.counted_sack_weight_kg ?? '—'}
+                              className={inputCls}
+                            />
+                        }
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium tabular-nums text-gray-900">
+                        {countedKg > 0 ? `${countedKg.toFixed(2)} kg` : <span className="text-gray-300">—</span>}
+                      </td>
+                    </>
+                  ) : (
+                    <td colSpan={3} className="px-3 py-2 text-right tabular-nums text-xs text-gray-600">
+                      {item.counted_sacks != null ? <>{item.counted_sacks} {unit} · </> : ''}{parseFloat(item.counted_kg).toFixed(2)} kg
+                    </td>
+                  )}
+
+                  <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-400">{parseFloat(item.system_kg).toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-xs font-medium text-gray-700">{currentKg.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right"><GapBadge gap={liveGap} /></td>
+                  <td className="px-3 py-2 text-xs text-gray-400">
+                    {!isPending && item.approved_by ? `by ${item.approved_by}` : ''}
+                  </td>
+                </tr>
+              )
+            })}
+          </Fragment>
+        ))}
       </Fragment>
     ))
   }
@@ -491,7 +635,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
           {' · '}<strong>{pendingItems.length}</strong> pending · <strong>{approvedItems.length}</strong> approved
         </p>
         {count.notes && <p className="text-xs text-amber-600 mt-0.5">Notes: {count.notes}</p>}
-        <p className="text-xs text-amber-500 mt-1">Gap = counted − current system weight. Refreshes every 30s as dispatches are encoded.</p>
+        <p className="text-xs text-amber-500 mt-1">Gap = counted − current system weight. Refreshes every 30s. You can edit sacks/kg before approving.</p>
       </div>
 
       <Card>
@@ -500,22 +644,23 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="w-8 px-4 py-2.5" />
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">At count</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Current</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Gap</th>
-                <th className="px-4 py-2.5" />
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Batch · SKU</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">kg / unit</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">= kg</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">At count</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Current</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Gap</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>}
 
               {pendingItems.length > 0 && (
                 <>
                   <tr>
-                    <td colSpan={8} className="px-4 pt-3 pb-1">
+                    <td colSpan={9} className="px-4 pt-3 pb-1">
                       <div className="flex items-center gap-3">
                         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pending</span>
                         <button onClick={() => setSelected(new Set(pendingItems.map(i => i.id)))} className="text-xs text-blue-600 hover:underline">Select all</button>
@@ -523,18 +668,18 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                       </div>
                     </td>
                   </tr>
-                  {renderItems(pendingItems, true)}
+                  {renderSection(pendingItems, true)}
                 </>
               )}
 
               {approvedItems.length > 0 && (
                 <>
                   <tr>
-                    <td colSpan={8} className="px-4 pt-5 pb-1">
+                    <td colSpan={9} className="px-4 pt-5 pb-1">
                       <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Approved</span>
                     </td>
                   </tr>
-                  {renderItems(approvedItems, false)}
+                  {renderSection(approvedItems, false)}
                 </>
               )}
             </tbody>
@@ -557,7 +702,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
           </Button>
         </div>
         <p className="text-xs text-gray-400">
-          Approve applies adjustments for selected items. Close Count ends the session — unapproved items are left as-is with no inventory change.
+          Edit sack counts inline before approving — changes are saved when you approve. Close Count ends the session without touching unapproved items.
         </p>
       </div>
     </div>
