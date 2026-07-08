@@ -125,13 +125,16 @@ function CountHistory({ counts, onStart }: { counts: PhysicalCount[]; onStart: (
 
 // ─── Count form ───────────────────────────────────────────────────────────────
 
+interface CountEntry { mode: 'kg' | 'unit'; value: string; kgPerUnit: string }
+
 function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount; onCancel: () => void }) {
   const queryClient = useQueryClient()
   const [countDate, setCountDate] = useState(existingCount?.count_date ?? todayStr())
   const [performedBy, setPerformedBy] = useState(existingCount?.performed_by ?? '')
   const [notes, setNotes] = useState(existingCount?.notes ?? '')
   const [locationFilter, setLocationFilter] = useState<string>('all')
-  const [unitCounts, setUnitCounts] = useState<Record<string, string>>({})
+  // Per-batch entry: the counted value, whether it's kg or units, and the kg-per-unit factor.
+  const [entries, setEntries] = useState<Record<string, CountEntry>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -152,12 +155,21 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   const locations = [...new Set(allBatches.map(locationName))].sort()
   const batches = locationFilter === 'all' ? allBatches : allBatches.filter(b => locationName(b) === locationFilter)
 
-  // Count physical units (sacks/bags); derive kg from the batch's own average unit weight,
-  // so bags (1 kg each) and commercial sacks both convert without a stored per-sack weight.
-  const unitWeight = (b: CountBatch) => (b.sacks && b.sacks > 0 ? parseFloat(b.weight_kg) / b.sacks : 1)
-  const defaultUnits = (b: CountBatch) => (b.sacks != null ? String(b.sacks) : parseFloat(b.weight_kg).toFixed(2))
-  const getUnits = (b: CountBatch) => (unitCounts[b.id] !== undefined ? unitCounts[b.id] : defaultUnits(b))
-  const countedKg = (b: CountBatch) => parseFloat(getUnits(b) || '0') * unitWeight(b)
+  // Counted can be entered in kg OR in sacks/bags; kg-per-unit converts between them.
+  const avgUnitWeight = (b: CountBatch) => (b.sacks && b.sacks > 0 ? parseFloat(b.weight_kg) / b.sacks : 1)
+  const defaultEntry = (b: CountBatch): CountEntry => ({
+    mode: 'unit',
+    value: b.sacks != null ? String(b.sacks) : parseFloat(b.weight_kg).toFixed(2),
+    kgPerUnit: (Math.round(avgUnitWeight(b) * 100) / 100).toString(),
+  })
+  const getEntry = (b: CountBatch): CountEntry => entries[b.id] ?? defaultEntry(b)
+  const patchEntry = (b: CountBatch, patch: Partial<CountEntry>) =>
+    setEntries(prev => ({ ...prev, [b.id]: { ...(prev[b.id] ?? defaultEntry(b)), ...patch } }))
+  const countedKg = (b: CountBatch) => {
+    const e = getEntry(b)
+    const v = parseFloat(e.value || '0')
+    return e.mode === 'kg' ? v : v * (parseFloat(e.kgPerUnit) || 0)
+  }
 
   const netVariance = batches.reduce((sum, b) => sum + (countedKg(b) - parseFloat(b.weight_kg)), 0)
 
@@ -193,7 +205,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   }
 
   const changedCount = batches.filter(b => {
-    if (unitCounts[b.id] === undefined) return false
+    if (entries[b.id] === undefined) return false
     return Math.abs(countedKg(b) - parseFloat(b.weight_kg)) >= 0.01
   }).length
 
@@ -267,8 +279,10 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                     {locBatches.map(batch => {
                       const system = parseFloat(batch.weight_kg)
                       const variance = countedKg(batch) - system
-                      const isDirty = unitCounts[batch.id] !== undefined && Math.abs(variance) >= 0.01
+                      const isDirty = entries[batch.id] !== undefined && Math.abs(variance) >= 0.01
                       const unit = skuUnit(batch.sku_type)
+                      const unitSingular = unit.replace(/s$/, '')
+                      const entry = getEntry(batch)
                       return (
                         <tr key={batch.id} className={`border-b border-gray-100 ${isDirty ? 'bg-amber-50/60' : ''}`}>
                           <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{batch.batch_number}</td>
@@ -280,21 +294,43 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                           </td>
                           <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{system.toFixed(2)}</td>
                           <td className="px-4 py-2.5 text-right">
-                            <div className="flex flex-col items-end gap-0.5">
+                            <div className="flex flex-col items-end gap-1">
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="number"
-                                  step="1"
+                                  step="0.01"
                                   min="0"
-                                  value={getUnits(batch)}
-                                  onChange={e => setUnitCounts(prev => ({ ...prev, [batch.id]: e.target.value }))}
+                                  value={entry.value}
+                                  onChange={e => patchEntry(batch, { value: e.target.value })}
                                   className={`w-20 text-right rounded-md border px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 ${
                                     isDirty ? 'border-amber-400 bg-amber-50 focus:ring-amber-400' : 'border-gray-200 focus:ring-blue-500'
                                   }`}
                                 />
-                                <span className="text-gray-400 text-xs w-8 text-left">{unit}</span>
+                                <select
+                                  value={entry.mode}
+                                  onChange={e => patchEntry(batch, { mode: e.target.value as 'kg' | 'unit' })}
+                                  className="rounded-md border border-gray-200 px-1.5 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                  <option value="unit">{unit}</option>
+                                  <option value="kg">kg</option>
+                                </select>
                               </div>
-                              <span className="text-gray-400 text-xs tabular-nums">= {countedKg(batch).toFixed(2)} kg</span>
+                              <div className="flex items-center gap-1 text-xs text-gray-400">
+                                <span>kg/{unitSingular}</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={entry.kgPerUnit}
+                                  onChange={e => patchEntry(batch, { kgPerUnit: e.target.value })}
+                                  className="w-14 text-right rounded border border-gray-200 px-1.5 py-0.5 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              <span className="text-gray-400 text-xs tabular-nums">
+                                {entry.mode === 'kg'
+                                  ? `≈ ${(parseFloat(entry.value || '0') / (parseFloat(entry.kgPerUnit) || 1)).toFixed(1)} ${unit}`
+                                  : `= ${countedKg(batch).toFixed(2)} kg`}
+                              </span>
                             </div>
                           </td>
                           <td className="px-4 py-2.5 text-right">
