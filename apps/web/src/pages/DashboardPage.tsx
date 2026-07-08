@@ -199,6 +199,7 @@ export default function DashboardPage() {
   })
 
   const isAdminOrManager = profile?.role === 'admin' || profile?.role === 'manager'
+  const canSeeInventory = profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'ops'
   const mySales = salesRows.find(r => r.repId === profile?.id)
 
   const { data: myStats } = useQuery({
@@ -298,7 +299,7 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      <Card>
+      {canSeeInventory && <Card>
         <div className="px-4 py-3 border-b border-gray-100">
           <p className="text-sm font-medium text-gray-700">Product Overview</p>
         </div>
@@ -363,7 +364,7 @@ export default function DashboardPage() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
     </div>
   )
 }
