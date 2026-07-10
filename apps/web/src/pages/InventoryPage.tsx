@@ -73,6 +73,7 @@ export default function InventoryPage() {
       const { data, error } = await supabase
         .from('batches')
         .select('id, batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lot_id, location, received_at, contract_item_id, lots(name), locations(name), contract_items(product_name, contracts(contract_number, title))')
+        .gt('weight_kg', 0)
         .order('received_at', { ascending: false })
       if (error) throw error
       return data as unknown as Batch[]
