@@ -106,8 +106,19 @@ export default function TransfersPage() {
 
   const skuOptions = useMemo(() => {
     if (!fromId || !lotId) return []
-    const types = new Set(batches.filter(b => b.location_id === fromId && b.lot_id === lotId).map(b => normSku(b.sku_type)))
-    return [...types].map(t => ({ value: t, label: t === 'retail_1kg' ? '1 kg bags' : 'Commercial sacks' }))
+    const typeMap = new Map<string, string>()
+    for (const b of batches.filter(b => b.location_id === fromId && b.lot_id === lotId)) {
+      const type = normSku(b.sku_type)
+      if (!typeMap.has(type)) {
+        if (type === 'retail_1kg') {
+          typeMap.set(type, '1 kg bags')
+        } else {
+          const sw = b.sack_weight_kg ? parseFloat(b.sack_weight_kg) : null
+          typeMap.set(type, sw ? `${Number.isInteger(sw) ? sw : sw} kg sacks` : 'Commercial sacks')
+        }
+      }
+    }
+    return [...typeMap.entries()].map(([value, label]) => ({ value, label }))
   }, [batches, fromId, lotId])
 
   const matchingBatches = useMemo(() => {
@@ -156,6 +167,13 @@ export default function TransfersPage() {
     setSacks(val)
     const n = parseInt(val) || 0
     setWeightKg(n > 0 ? String(n) : '')
+  }
+
+  const handleSacksChange = (val: string) => {
+    setSacks(val)
+    const n = parseInt(val) || 0
+    const sw = resolvedBatch?.sack_weight_kg ? parseFloat(resolvedBatch.sack_weight_kg) : null
+    if (n > 0 && sw) setWeightKg((n * sw).toFixed(2))
   }
 
   const handleSubmit = async () => {
@@ -307,7 +325,7 @@ export default function TransfersPage() {
                       </div>
                       <div className="space-y-1.5">
                         <Label>Sacks</Label>
-                        <Input type="number" min="1" value={sacks} onChange={e => setSacks(e.target.value)} placeholder="0" />
+                        <Input type="number" min="1" value={sacks} onChange={e => handleSacksChange(e.target.value)} placeholder="0" />
                       </div>
                     </div>
                   )}
