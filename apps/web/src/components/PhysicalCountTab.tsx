@@ -49,6 +49,8 @@ interface PhysicalCountItem {
     sacks: number | null
     sack_weight_kg: string | null
     sku_type: string | null
+    lot_id: string | null
+    location_id: string | null
     lots: { name: string } | null
     locations: { name: string } | null
   } | null
@@ -431,8 +433,9 @@ function getItemEdit(item: PhysicalCountItem, edits: ItemEdits): ItemEdit {
 function getItemCountedKg(item: PhysicalCountItem, edits: ItemEdits): number {
   if (edits[item.id]) {
     const edit = edits[item.id]
-    const total = computeTotalKg(edit.sacks, edit.sackWeightKg, edit.extraBags)
-    if (total > 0) return total
+    // Extra bags go to a separate retail_1kg batch, so show only commercial sacks weight
+    const sacksKg = computeTotalKg(edit.sacks, edit.sackWeightKg, '')
+    if (sacksKg > 0) return sacksKg
   }
   return parseFloat(item.counted_kg)
 }
@@ -451,7 +454,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     queryFn: async () => {
       const { data, error } = await supabase
         .from('physical_count_items')
-        .select('id, batch_id, system_kg, counted_kg, counted_sacks, counted_sack_weight_kg, approved_at, approved_by, batches(batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lots(name), locations(name))')
+        .select('id, batch_id, system_kg, counted_kg, counted_sacks, counted_sack_weight_kg, approved_at, approved_by, batches(batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lot_id, location_id, lots(name), locations(name))')
         .eq('physical_count_id', count.id)
       if (error) throw error
       return data as unknown as PhysicalCountItem[]
@@ -483,7 +486,10 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     for (const item of toApprove) {
       const edit = getItemEdit(item, edits)
       const fixed = isFixedWeightSku(item.batches?.sku_type)
-      const editedKg = computeTotalKg(edit.sacks, edit.sackWeightKg, edit.extraBags)
+      const extraBagsCount = parseInt(edit.extraBags) || 0
+
+      // Commercial batch: sacks × weight only; extra bags go to retail_1kg batch
+      const editedKg = computeTotalKg(edit.sacks, edit.sackWeightKg, '')
       const finalCountedKg = editedKg > 0 ? editedKg : parseFloat(item.counted_kg)
       const finalSacks = parseInt(edit.sacks) || item.counted_sacks
       const finalSackWeight = fixed ? 1 : (parseFloat(edit.sackWeightKg) || (item.counted_sack_weight_kg ? parseFloat(item.counted_sack_weight_kg) : null))
@@ -520,6 +526,55 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         approved_at: now,
         approved_by: reviewedBy.trim(),
       }).eq('id', item.id)
+
+      // Extra bags → find or create a retail_1kg batch for same product + location
+      if (extraBagsCount > 0) {
+        const lotId      = item.batches?.lot_id
+        const locationId = item.batches?.location_id
+        if (lotId) {
+          const { data: existing } = await supabase
+            .from('batches')
+            .select('id, weight_kg, sacks')
+            .eq('lot_id', lotId)
+            .eq('sku_type', 'retail_1kg')
+            .eq('location_id', locationId)
+            .limit(1)
+
+          if (existing && existing.length > 0) {
+            const retail    = existing[0]
+            const newWeight = parseFloat(retail.weight_kg) + extraBagsCount
+            const newSacks  = (retail.sacks ?? 0) + extraBagsCount
+            await supabase.from('batches').update({ weight_kg: newWeight, sacks: newSacks }).eq('id', retail.id)
+            await supabase.from('inventory_transactions').insert([{
+              batch_id:          retail.id,
+              type:              'adjustment',
+              weight_change_kg:  extraBagsCount.toFixed(2),
+              physical_count_id: count.id,
+              notes:             `${txNote} — +${extraBagsCount} x 1kg bags`,
+            }])
+          } else {
+            const today = new Date().toISOString().slice(0, 10)
+            const { data: newBatch } = await supabase.from('batches').insert([{
+              lot_id:        lotId,
+              sku_type:      'retail_1kg',
+              weight_kg:     extraBagsCount,
+              sacks:         extraBagsCount,
+              sack_weight_kg: 1,
+              location_id:   locationId,
+              received_at:   today,
+            }]).select('id')
+            if (newBatch && newBatch.length > 0) {
+              await supabase.from('inventory_transactions').insert([{
+                batch_id:          newBatch[0].id,
+                type:              'adjustment',
+                weight_change_kg:  extraBagsCount.toFixed(2),
+                physical_count_id: count.id,
+                notes:             `${txNote} — created ${extraBagsCount} x 1kg bags`,
+              }])
+            }
+          }
+        }
+      }
     }
 
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
