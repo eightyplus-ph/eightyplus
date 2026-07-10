@@ -487,7 +487,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     for (const item of toApprove) {
       const edit = getItemEdit(item, edits)
       const fixed = isFixedWeightSku(item.batches?.sku_type)
-      const editedKg = computeKg(edit.sacks, edit.sackWeightKg)
+      const editedKg = computeTotalKg(edit.sacks, edit.sackWeightKg, edit.extraBags)
       const finalCountedKg = editedKg > 0 ? editedKg : parseFloat(item.counted_kg)
       const finalSacks = parseInt(edit.sacks) || item.counted_sacks
       const finalSackWeight = fixed ? 1 : (parseFloat(edit.sackWeightKg) || (item.counted_sack_weight_kg ? parseFloat(item.counted_sack_weight_kg) : null))
