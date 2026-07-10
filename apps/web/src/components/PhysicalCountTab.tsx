@@ -578,7 +578,9 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
               const edit = getItemEdit(item, edits)
               const countedKg = getItemCountedKg(item, edits)
               const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
-              const liveGap = countedKg - currentKg
+              const liveGap = isPending
+                ? countedKg - currentKg
+                : parseFloat(item.counted_kg) - parseFloat(item.system_kg)
               const isSelected = selected.has(item.id)
               const isDirty = !!edits[item.id]
 
