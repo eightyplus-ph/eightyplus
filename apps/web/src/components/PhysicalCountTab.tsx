@@ -72,12 +72,6 @@ function skuLabel(sku: string | null): string {
   return 'Commercial'
 }
 
-function computeKg(sacks: string, sackWeightKg: string): number {
-  const s = parseFloat(sacks)
-  const w = parseFloat(sackWeightKg)
-  return s > 0 && w > 0 ? s * w : 0
-}
-
 // Group an array by two keys: location → product name → items[]
 function groupByLocProduct<T>(
   items: T[],
