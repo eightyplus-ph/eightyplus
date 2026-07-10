@@ -274,7 +274,7 @@ export default function InventoryPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {groupBatches.map(batch => {
+                          {[...groupBatches].sort((a, b) => (a.sku_type === 'retail_1kg' ? -1 : 1) - (b.sku_type === 'retail_1kg' ? -1 : 1)).map(batch => {
                             const isEditing  = editingId === batch.id
                             const fixed      = isFixedWeightSku(batch.sku_type)
                             const unit       = skuUnit(batch.sku_type)
