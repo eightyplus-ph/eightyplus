@@ -435,9 +435,11 @@ function getItemEdit(item: PhysicalCountItem, edits: ItemEdits): ItemEdit {
 }
 
 function getItemCountedKg(item: PhysicalCountItem, edits: ItemEdits): number {
-  const edit = getItemEdit(item, edits)
-  const total = computeTotalKg(edit.sacks, edit.sackWeightKg, edit.extraBags)
-  if (total > 0) return total
+  if (edits[item.id]) {
+    const edit = edits[item.id]
+    const total = computeTotalKg(edit.sacks, edit.sackWeightKg, edit.extraBags)
+    if (total > 0) return total
+  }
   return parseFloat(item.counted_kg)
 }
 
