@@ -12,6 +12,7 @@ interface DispatchItemRecord { weight_dispatched_kg: string }
 interface OrderItem {
   id: string
   lot_id: string
+  batch_id: string | null
   location_id: string | null
   weight_ordered_kg: string
   lots: { name: string } | null
@@ -85,6 +86,19 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
       }
     }
 
+    // Pre-flight: the tagged location must hold enough stock (deduction is location-scoped)
+    for (const { item, qty } of lines) {
+      let availQ = supabase.from('batches').select('weight_kg').eq('lot_id', item.lot_id).gt('weight_kg', 0)
+      if (item.location_id) availQ = availQ.eq('location_id', item.location_id)
+      const { data: availBatches } = await availQ
+      const availKg = (availBatches ?? []).reduce((s, b) => s + parseFloat(b.weight_kg), 0)
+      if (qty > availKg + 0.01) {
+        const where = item.locations?.name ?? 'the tagged location'
+        setError(`${item.lots?.name ?? 'Item'}: only ${Math.round(availKg)} kg at ${where}, need ${Math.round(qty)} kg.`)
+        return
+      }
+    }
+
     setSubmitting(true)
 
     // Create dispatch record with the actual dispatch date
@@ -107,14 +121,19 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
       }])
       if (diErr) { setError(diErr.message); setSubmitting(false); return }
 
-      // FIFO batch deduction
+      // Deduct from the tagged location only: tagged batch first, then FIFO within that location
       let remaining = qty
-      const { data: batches } = await supabase
+      let batchQ = supabase
         .from('batches').select('id, weight_kg')
         .eq('lot_id', item.lot_id).gt('weight_kg', 0)
-        .order('received_at', { ascending: true })
+      if (item.location_id) batchQ = batchQ.eq('location_id', item.location_id)
+      const { data: locBatches } = await batchQ.order('received_at', { ascending: true })
 
-      for (const batch of batches ?? []) {
+      const batches = (locBatches ?? []).sort(
+        (a, b) => Number(b.id === item.batch_id) - Number(a.id === item.batch_id)
+      )
+
+      for (const batch of batches) {
         if (remaining <= 0) break
         const batchKg = parseFloat(batch.weight_kg)
         const deduct = Math.min(remaining, batchKg)
@@ -322,7 +341,7 @@ export default function DispatchesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg))')
+        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, batch_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg))')
         .eq('status', 'confirmed')
         .order('scheduled_dispatch_date', { ascending: true, nullsFirst: false })
       if (error) throw error
