@@ -19,6 +19,7 @@ interface OrderItem {
   locations: { name: string } | null
   dispatch_items: DispatchItemRecord[]
 }
+interface PendingDispatchRecord { dr_number: string; dispatched_date: string }
 interface PendingOrder {
   id: string
   os_number: string
@@ -26,6 +27,7 @@ interface PendingOrder {
   scheduled_dispatch_date: string | null
   clients: { company_name: string } | null
   order_items: OrderItem[]
+  dispatches: PendingDispatchRecord[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -234,6 +236,11 @@ function OrderCard({
 }) {
   const [scheduling, setScheduling] = useState(false)
   const remaining = orderRemainingKg(order)
+  const orderedTotal = order.order_items.reduce((s, i) => s + parseFloat(i.weight_ordered_kg), 0)
+  const dispatchedTotal = order.order_items.reduce((s, i) => s + dispatchedKg(i), 0)
+  const lastDr = order.dispatches.length
+    ? [...order.dispatches].sort((a, b) => b.dispatched_date.localeCompare(a.dispatched_date))[0]
+    : null
   const isOpen = activeForm === order.id
 
   return (
@@ -260,6 +267,12 @@ function OrderCard({
               </p>
             ))}
           </div>
+          {dispatchedTotal > 0 && (
+            <p className="mt-1.5 text-xs font-medium text-amber-600">
+              {Math.round(dispatchedTotal)} of {Math.round(orderedTotal)} kg shipped
+              {lastDr && <span className="text-gray-400 font-normal"> · last {lastDr.dr_number}</span>}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
@@ -341,7 +354,7 @@ export default function DispatchesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, batch_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg))')
+        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, batch_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(dr_number, dispatched_date)')
         .eq('status', 'confirmed')
         .order('scheduled_dispatch_date', { ascending: true, nullsFirst: false })
       if (error) throw error

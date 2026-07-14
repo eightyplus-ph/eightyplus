@@ -514,6 +514,8 @@ export default function OrdersPage() {
                 const isOpen = expanded.has(order.id)
                 const kg = totalKg(order.order_items)
                 const value = totalValue(order.order_items)
+                const dispatched = order.order_items.reduce((s, i) => s + dispatchedKg(i), 0)
+                const partiallyShipped = dispatched > 0 && dispatched < kg - 0.01
                 return (
                   <>
                     <tr key={order.id} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggleExpand(order.id)}>
@@ -531,7 +533,12 @@ export default function OrdersPage() {
                           {STATUS_LABELS[order.status] ?? order.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right text-gray-900">{Math.round(kg)} kg</td>
+                      <td className="px-4 py-3 text-right text-gray-900">
+                        {Math.round(kg)} kg
+                        {partiallyShipped && (
+                          <span className="block text-xs font-medium text-amber-600">{Math.round(dispatched)} of {Math.round(kg)} kg shipped</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         {(() => {
                           const rate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
