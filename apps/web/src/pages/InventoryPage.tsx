@@ -34,7 +34,6 @@ interface ProductGroup {
 
 type Tab = 'stock' | 'physical-count'
 type StockFilter = 'all' | 'available' | 'contract'
-type LocationFilter = 'all' | 'bagtikan' | 'paco'
 
 function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -58,7 +57,7 @@ export default function InventoryPage() {
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<Tab>('stock')
   const [filter, setFilter] = useState<StockFilter>('all')
-  const [locationFilter, setLocationFilter] = useState<LocationFilter>('all')
+  const [locationFilter, setLocationFilter] = useState<string>('all') // 'all' or a location name
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSacks, setEditSacks] = useState('')
@@ -107,8 +106,7 @@ export default function InventoryPage() {
   const filteredBatches = batches.filter(b => {
     if (filter === 'available' && b.contract_item_id) return false
     if (filter === 'contract' && !b.contract_item_id) return false
-    if (locationFilter === 'bagtikan' && !locationName(b).includes('bagtikan')) return false
-    if (locationFilter === 'paco' && !locationName(b).includes('paco')) return false
+    if (locationFilter !== 'all' && locationName(b) !== locationFilter.toLowerCase()) return false
     return true
   })
 
@@ -127,9 +125,19 @@ export default function InventoryPage() {
 
   const contractCount  = batches.filter(b =>  b.contract_item_id).length
   const availableCount = batches.filter(b => !b.contract_item_id).length
-  const bagtikanCount  = batches.filter(b => locationName(b).includes('bagtikan')).length
-  const pacoCount      = batches.filter(b => locationName(b).includes('paco')).length
   const totalKg        = batches.reduce((s, b) => s + parseFloat(b.weight_kg), 0)
+
+  // Distinct locations present in the batch data, with counts — drives the filter pills
+  const locationOptions = (() => {
+    const counts = new Map<string, number>()
+    for (const b of batches) {
+      const name = b.locations?.name ?? b.location
+      if (name) counts.set(name, (counts.get(name) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  })()
 
   const toggleProduct = (lotId: string) =>
     setExpanded(prev => { const n = new Set(prev); n.has(lotId) ? n.delete(lotId) : n.add(lotId); return n })
@@ -180,9 +188,10 @@ export default function InventoryPage() {
               <div className="w-px h-4 bg-gray-200" />
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-gray-400 mr-1">Location</span>
-                <Pill active={locationFilter === 'all'}      onClick={() => setLocationFilter('all')}>All</Pill>
-                <Pill active={locationFilter === 'bagtikan'} onClick={() => setLocationFilter('bagtikan')}>Bagtikan ({bagtikanCount})</Pill>
-                <Pill active={locationFilter === 'paco'}     onClick={() => setLocationFilter('paco')}>Paco ({pacoCount})</Pill>
+                <Pill active={locationFilter === 'all'} onClick={() => setLocationFilter('all')}>All</Pill>
+                {locationOptions.map(({ name, count }) => (
+                  <Pill key={name} active={locationFilter === name} onClick={() => setLocationFilter(name)}>{name} ({count})</Pill>
+                ))}
               </div>
             </div>
             {groups.length > 0 && (
