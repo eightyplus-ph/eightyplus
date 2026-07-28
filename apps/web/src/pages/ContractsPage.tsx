@@ -354,6 +354,34 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
   const totalContracted = items.reduce((s, i) =>
     s + months.reduce((ms, m) => ms + (i.monthly_schedule?.[m] ?? 0), 0), 0)
 
+  // Ordered-against-contract, matched to each product line by name.
+  // There's no hard FK between a contract line (product_name) and an order (lot name),
+  // so match by significant-token overlap and assign each ordered lot to its best line.
+  const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const STOP = new Set(['the', 'and', 'natural', 'washed', 'anaerobic', 'slow', 'dry', 'project', 'grade', 'screen', 'size', 'clean'])
+  const nameTokens = (s: string) => normName(s).split(' ').filter(t => t.length > 2 && !STOP.has(t))
+  const orderedByItem = new Map<string, number>()
+  {
+    const orderedByLot = new Map<string, number>()
+    for (const o of orders) for (const oi of o.order_items) {
+      const ln = oi.lots?.name ?? ''
+      if (ln) orderedByLot.set(ln, (orderedByLot.get(ln) ?? 0) + parseFloat(oi.weight_ordered_kg))
+    }
+    for (const [lotName, kg] of orderedByLot) {
+      const lot = normName(lotName)
+      let bestId: string | null = null, bestScore = 0
+      for (const it of items) {
+        const score = nameTokens(it.product_name).filter(t => lot.includes(t)).length
+        if (score > bestScore) { bestScore = score; bestId = it.id }
+      }
+      if (bestId && bestScore > 0) orderedByItem.set(bestId, (orderedByItem.get(bestId) ?? 0) + kg)
+    }
+  }
+  const totalRemaining = items.reduce((s, i) => {
+    const t = months.reduce((ms, m) => ms + (i.monthly_schedule?.[m] ?? 0), 0)
+    return s + Math.max(0, t - (orderedByItem.get(i.id) ?? 0))
+  }, 0)
+
   return (
     <div className="bg-gray-50 border-b border-gray-200 divide-y divide-gray-200">
       {/* Monthly schedule */}
@@ -369,12 +397,15 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
                     <th key={m} className="text-right px-3 py-2 font-medium text-gray-500 text-xs">{monthLabel(m)}</th>
                   ))}
                   <th className="text-right px-3 py-2 font-medium text-gray-500">Total kg</th>
+                  <th className="text-right px-3 py-2 font-medium text-gray-500">Remaining</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map(item => {
                   const total = months.reduce((s, m) => s + (item.monthly_schedule?.[m] ?? 0), 0)
                   const totalValue = total * parseFloat(item.price_per_kg)
+                  const ordered = orderedByItem.get(item.id) ?? 0
+                  const remaining = Math.max(0, total - ordered)
                   return (
                     <tr key={item.id} className="border-b border-gray-100">
                       <td className="px-3 py-2 font-medium text-gray-900">{item.product_name}</td>
@@ -386,6 +417,10 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
                       <td className="px-3 py-2 text-right">
                         <p className="font-semibold text-gray-900">{total.toLocaleString()} kg</p>
                         {showPrice && <p className="text-xs text-gray-400">₱{Math.round(totalValue).toLocaleString()}</p>}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <p className={`font-semibold ${remaining > 0 ? 'text-amber-600' : 'text-green-600'}`}>{remaining.toLocaleString()} kg</p>
+                        <p className="text-xs text-gray-400">{ordered.toLocaleString()} ordered</p>
                       </td>
                     </tr>
                   )
@@ -402,6 +437,9 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
                     })}
                     <td className="px-3 py-2 text-right text-xs font-semibold text-gray-800">
                       {totalContracted.toLocaleString()} kg
+                    </td>
+                    <td className="px-3 py-2 text-right text-xs font-semibold text-amber-700">
+                      {totalRemaining.toLocaleString()} kg
                     </td>
                   </tr>
                 </tfoot>
