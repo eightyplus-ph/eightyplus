@@ -59,6 +59,7 @@ interface Order {
   created_at: string
   payment_proof_url: string | null
   created_by: string | null
+  discount_percent: string | null
   clients: { company_name: string; withholding_tax_rate: string } | null
   profiles: { full_name: string } | null
   order_items: OrderItem[]
@@ -79,6 +80,7 @@ function totalKg(items: OrderItem[]) { return items.reduce((s, i) => s + parseFl
 function totalValue(items: OrderItem[]) { return items.reduce((s, i) => s + parseFloat(i.weight_ordered_kg ?? '0') * parseFloat(i.price_per_kg ?? '0'), 0) }
 function dispatchedKg(item: OrderItem) { return item.dispatch_items.reduce((s, d) => s + parseFloat(d.weight_dispatched_kg ?? '0'), 0) }
 function remainingKg(item: OrderItem) { return Math.max(0, parseFloat(item.weight_ordered_kg) - dispatchedKg(item)) }
+function discountAmount(gross: number, pct: number) { return gross * (pct / 100) }
 function whtAmount(gross: number, rate: number) { return gross * (rate / 100) }
 function netDue(gross: number, rate: number) { return gross - whtAmount(gross, rate) }
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -96,6 +98,7 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
   const kg = totalKg(order.order_items)
   const gross = totalValue(order.order_items)
   const whtRate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
+  const discPct = parseFloat(order.discount_percent ?? '0')
 
   const handleConfirm = async () => {
     if (!file) return
@@ -128,15 +131,21 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
                 <span>Gross Total</span>
                 <span className="tabular-nums">{peso(gross)}</span>
               </div>
+              {discPct > 0 && (
+                <div className="flex justify-between text-gray-400">
+                  <span>Discount ({discPct}%)</span>
+                  <span className="tabular-nums text-red-400">− {peso(discountAmount(gross, discPct))}</span>
+                </div>
+              )}
               {whtRate > 0 && (
                 <div className="flex justify-between text-gray-400">
                   <span>WHT ({whtRate}%)</span>
-                  <span className="tabular-nums text-red-400">− {peso(whtAmount(gross, whtRate))}</span>
+                  <span className="tabular-nums text-red-400">− {peso(whtAmount(gross - discountAmount(gross, discPct), whtRate))}</span>
                 </div>
               )}
               <div className="flex justify-between font-semibold text-gray-900 pt-1 border-t border-gray-200">
-                <span>{whtRate > 0 ? 'Net Amount Due' : 'Total'}</span>
-                <span className="tabular-nums">{peso(whtRate > 0 ? netDue(gross, whtRate) : gross)}</span>
+                <span>{(discPct > 0 || whtRate > 0) ? 'Net Amount Due' : 'Total'}</span>
+                <span className="tabular-nums">{peso(netDue(gross - discountAmount(gross, discPct), whtRate))}</span>
               </div>
             </div>
           </div>
@@ -616,6 +625,8 @@ export default function OrdersPage() {
                           {(() => {
                             const gross = totalValue(order.order_items)
                             const rate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
+                            const disc = parseFloat(order.discount_percent ?? '0')
+                            const afterDisc = gross - discountAmount(gross, disc)
                             return (
                               <div className="flex justify-end mb-4">
                                 <div className="text-xs space-y-1 min-w-48">
@@ -623,15 +634,21 @@ export default function OrdersPage() {
                                     <span>Gross Total</span>
                                     <span className="tabular-nums font-medium text-gray-700">{peso(gross)}</span>
                                   </div>
+                                  {disc > 0 && (
+                                    <div className="flex justify-between gap-8 text-gray-400">
+                                      <span>Discount ({disc}%)</span>
+                                      <span className="tabular-nums text-red-400">− {peso(discountAmount(gross, disc))}</span>
+                                    </div>
+                                  )}
                                   {rate > 0 && (
                                     <div className="flex justify-between gap-8 text-gray-400">
                                       <span>WHT ({rate}%)</span>
-                                      <span className="tabular-nums text-red-400">− {peso(whtAmount(gross, rate))}</span>
+                                      <span className="tabular-nums text-red-400">− {peso(whtAmount(afterDisc, rate))}</span>
                                     </div>
                                   )}
                                   <div className="flex justify-between gap-8 font-semibold text-gray-900 pt-1 border-t border-gray-200">
-                                    <span>{rate > 0 ? 'Net Amount Due' : 'Total'}</span>
-                                    <span className="tabular-nums">{peso(rate > 0 ? netDue(gross, rate) : gross)}</span>
+                                    <span>{(disc > 0 || rate > 0) ? 'Net Amount Due' : 'Total'}</span>
+                                    <span className="tabular-nums">{peso(netDue(afterDisc, rate))}</span>
                                   </div>
                                 </div>
                               </div>
