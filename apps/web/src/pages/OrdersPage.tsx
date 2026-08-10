@@ -60,7 +60,7 @@ interface Order {
   payment_proof_url: string | null
   created_by: string | null
   discount_percent: string | null
-  clients: { company_name: string; withholding_tax_rate: string } | null
+  clients: { company_name: string; withholding_tax_rate: string; tin: string | null; address: string | null } | null
   profiles: { full_name: string } | null
   order_items: OrderItem[]
   dispatches: Dispatch[]
@@ -175,6 +175,131 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
   )
 }
 
+// ─── Statement of Account ───────────────────────────────────────────────────────
+
+// Eightyplus seller details — [PLACEHOLDER] fill with registered name / TIN / address
+const SELLER = {
+  name: 'Eightyplus PH',
+  tin: '[SELLER TIN]',
+  address: '[SELLER ADDRESS]',
+}
+
+function StatementOfAccount({ order, onClose }: { order: Order; onClose: () => void }) {
+  const items = order.order_items
+  const gross = totalValue(items)
+  const kg = totalKg(items)
+  const discPct = parseFloat(order.discount_percent ?? '0')
+  const discAmt = discountAmount(gross, discPct)
+  const afterDisc = gross - discAmt
+  const whtRate = parseFloat(order.clients?.withholding_tax_rate ?? '0')
+  const whtAmt = whtAmount(afterDisc, whtRate)
+  const net = afterDisc - whtAmt
+  const printDate = new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+  const orderDate = new Date(order.order_date + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+  const paid = !!order.payment_date
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0" onClick={onClose}>
+      <style>{`@media print { body * { visibility: hidden !important; } #soa-print, #soa-print * { visibility: visible !important; } #soa-print { position: absolute; left: 0; top: 0; width: 100%; } .soa-noprint { display: none !important; } }`}</style>
+      <div className="bg-white w-full max-w-2xl my-4 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
+        <div className="soa-noprint flex justify-between items-center px-6 py-3 border-b border-gray-200">
+          <span className="text-sm font-medium text-gray-700">Statement of Account — {order.os_number}</span>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => window.print()}>Print / Save PDF</Button>
+            <Button size="sm" variant="outline" onClick={onClose}>Close</Button>
+          </div>
+        </div>
+
+        <div id="soa-print" className="px-8 py-8 text-sm text-gray-800">
+          {/* Header */}
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <p className="text-lg font-bold text-gray-900">{SELLER.name}</p>
+              <p className="text-xs text-gray-500">TIN: {SELLER.tin}</p>
+              <p className="text-xs text-gray-500 max-w-xs">{SELLER.address}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-base font-bold tracking-wide text-gray-900">STATEMENT OF ACCOUNT</p>
+              <p className="text-xs text-gray-500">SOA No. SOA-{order.os_number}</p>
+              <p className="text-xs text-gray-500">Order Date: {orderDate}</p>
+              <p className="text-xs text-gray-500">Printed: {printDate}</p>
+            </div>
+          </div>
+
+          {/* Bill to */}
+          <div className="mb-6 rounded border border-gray-200 px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-gray-400 mb-1">Bill To</p>
+            <p className="font-semibold text-gray-900">{order.clients?.company_name}</p>
+            {order.clients?.tin && <p className="text-xs text-gray-500">TIN: {order.clients.tin}</p>}
+            {order.clients?.address && <p className="text-xs text-gray-500">{order.clients.address}</p>}
+          </div>
+
+          {/* Line items */}
+          <table className="w-full mb-4">
+            <thead>
+              <tr className="border-b border-gray-300 text-xs text-gray-500">
+                <th className="text-left py-1.5 font-medium">Product</th>
+                <th className="text-right py-1.5 font-medium">Qty (kg)</th>
+                <th className="text-right py-1.5 font-medium">Price/kg</th>
+                <th className="text-right py-1.5 font-medium">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(i => {
+                const w = parseFloat(i.weight_ordered_kg); const p = parseFloat(i.price_per_kg)
+                return (
+                  <tr key={i.id} className="border-b border-gray-100">
+                    <td className="py-1.5">{i.lots?.name ?? '—'}</td>
+                    <td className="py-1.5 text-right tabular-nums">{w.toLocaleString()}</td>
+                    <td className="py-1.5 text-right tabular-nums">{peso(p)}</td>
+                    <td className="py-1.5 text-right tabular-nums">{peso(w * p)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          {/* Totals */}
+          <div className="flex justify-end mb-6">
+            <div className="w-64 space-y-1 text-sm">
+              <div className="flex justify-between text-gray-500">
+                <span>Gross Total ({Math.round(kg)} kg)</span>
+                <span className="tabular-nums">{peso(gross)}</span>
+              </div>
+              {discPct > 0 && (
+                <div className="flex justify-between text-gray-500">
+                  <span>Discount ({discPct}%)</span>
+                  <span className="tabular-nums">− {peso(discAmt)}</span>
+                </div>
+              )}
+              {whtRate > 0 && (
+                <div className="flex justify-between text-gray-500">
+                  <span>Withholding Tax ({whtRate}%)</span>
+                  <span className="tabular-nums">− {peso(whtAmt)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-300">
+                <span>Net Amount Due</span>
+                <span className="tabular-nums">{peso(net)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Payment status */}
+          <div className="mb-8">
+            <span className={`inline-block rounded px-2 py-1 text-xs font-medium ${paid ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+              {paid ? `PAID — ${new Date(order.payment_date! + 'T00:00:00').toLocaleDateString('en-PH')}` : 'UNPAID'}
+            </span>
+            {order.notes && <p className="text-xs text-gray-500 mt-2">{order.notes}</p>}
+          </div>
+
+          <p className="text-xs text-gray-400 border-t border-gray-200 pt-3">This is a system-generated statement of account. Please settle the Net Amount Due per agreed terms.</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function OrdersPage() {
@@ -193,6 +318,7 @@ export default function OrdersPage() {
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [confirmingOrder, setConfirmingOrder] = useState<Order | null>(null)
+  const [soaOrder, setSoaOrder] = useState<Order | null>(null)
   const [search, setSearch] = useState('')
 
   const { data: clients = [] } = useQuery<Client[]>({
@@ -257,7 +383,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name, withholding_tax_rate), profiles(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name, withholding_tax_rate, tin, address), profiles(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]
@@ -575,6 +701,7 @@ export default function OrdersPage() {
                           {order.payment_proof_url && (
                             <button onClick={() => viewProof(order.payment_proof_url!)} className="text-xs text-gray-400 hover:text-gray-600 whitespace-nowrap">View proof</button>
                           )}
+                          <button onClick={() => setSoaOrder(order)} className="text-xs text-gray-500 hover:text-blue-600 whitespace-nowrap">Statement</button>
                         </div>
                       </td>
                     </tr>
@@ -696,6 +823,7 @@ export default function OrdersPage() {
       </Card>
 
       {confirmingOrder && <ConfirmModal order={confirmingOrder} onClose={() => setConfirmingOrder(null)} />}
+      {soaOrder && <StatementOfAccount order={soaOrder} onClose={() => setSoaOrder(null)} />}
     </div>
   )
 }
