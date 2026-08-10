@@ -177,11 +177,9 @@ function ConfirmModal({ order, onClose }: { order: Order; onClose: () => void })
 
 // ─── Statement of Account ───────────────────────────────────────────────────────
 
-// Eightyplus seller details — [PLACEHOLDER] fill with registered name / TIN / address
+// Eightyplus seller details
 const SELLER = {
   name: 'Eightyplus PH',
-  tin: '[SELLER TIN]',
-  address: '[SELLER ADDRESS]',
 }
 
 function StatementOfAccount({ order, onClose }: { order: Order; onClose: () => void }) {
@@ -215,8 +213,6 @@ function StatementOfAccount({ order, onClose }: { order: Order; onClose: () => v
           <div className="flex justify-between items-start mb-6">
             <div>
               <p className="text-lg font-bold text-gray-900">{SELLER.name}</p>
-              <p className="text-xs text-gray-500">TIN: {SELLER.tin}</p>
-              <p className="text-xs text-gray-500 max-w-xs">{SELLER.address}</p>
             </div>
             <div className="text-right">
               <p className="text-base font-bold tracking-wide text-gray-900">STATEMENT OF ACCOUNT</p>
