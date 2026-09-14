@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import EditReservedOrderDialog from '@/components/EditReservedOrderDialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -314,6 +315,7 @@ export default function OrdersPage() {
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [confirmingOrder, setConfirmingOrder] = useState<Order | null>(null)
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null)
   const [soaOrder, setSoaOrder] = useState<Order | null>(null)
   const [search, setSearch] = useState('')
 
@@ -684,7 +686,10 @@ export default function OrdersPage() {
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="flex gap-2 items-center">
                           {order.status === 'reserved' && (
-                            <button onClick={() => setConfirmingOrder(order)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
+                            <>
+                              <button onClick={() => setEditingOrder(order)} className="text-xs text-gray-500 hover:text-blue-600 whitespace-nowrap">Edit</button>
+                              <button onClick={() => setConfirmingOrder(order)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
+                            </>
                           )}
                           {order.status === 'confirmed' && (
                             <span className="flex items-center gap-1.5">
@@ -819,6 +824,7 @@ export default function OrdersPage() {
       </Card>
 
       {confirmingOrder && <ConfirmModal order={confirmingOrder} onClose={() => setConfirmingOrder(null)} />}
+      {editingOrder && <EditReservedOrderDialog order={editingOrder} onClose={() => setEditingOrder(null)} />}
       {soaOrder && <StatementOfAccount order={soaOrder} onClose={() => setSoaOrder(null)} />}
     </div>
   )

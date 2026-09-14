@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { Card } from '@/components/ui/card'
+import LotHistoryDialog from '@/components/LotHistoryDialog'
 
 interface Lot {
   id: string
@@ -25,6 +26,7 @@ export default function LotsPage() {
   const [editName, setEditName] = useState('')
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<Lot | null>(null)
 
   const { data: lots = [], isLoading } = useQuery<LotWithBatchCount[]>({
     queryKey: ['lots'],
@@ -72,8 +74,8 @@ export default function LotsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Product Names</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Click any product name to edit it.</p>
+          <h1 className="text-2xl font-bold">Products</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Click any product to see who buys it and when they last ordered.</p>
         </div>
       </div>
 
@@ -121,13 +123,13 @@ export default function LotsPage() {
                         <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
                       </div>
                     ) : (
-                      <span
-                        className="cursor-pointer hover:text-blue-600 hover:underline"
-                        onClick={() => startEdit(lot)}
-                        title="Click to edit"
+                      <button
+                        className="text-left cursor-pointer hover:text-blue-600 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                        onClick={() => setViewing(lot)}
+                        title="See buyers and order history"
                       >
                         {lot.name}
-                      </span>
+                      </button>
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-600">{lot.origin}</td>
@@ -142,7 +144,15 @@ export default function LotsPage() {
                       ? <span className="text-amber-500">0 batches</span>
                       : `${lot.batch_count} batch${lot.batch_count === 1 ? '' : 'es'}`}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {editingId !== lot.id && (
+                      <button
+                        onClick={() => startEdit(lot)}
+                        className="text-xs text-gray-400 hover:text-gray-700 mr-3"
+                      >
+                        Rename
+                      </button>
+                    )}
                     {lot.batch_count === 0 && (
                       <button
                         onClick={() => deleteLot(lot.id)}
@@ -159,6 +169,8 @@ export default function LotsPage() {
           </table>
         </div>
       </Card>
+
+      {viewing && <LotHistoryDialog lot={viewing} onClose={() => setViewing(null)} />}
     </div>
   )
 }
