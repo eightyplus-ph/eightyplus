@@ -381,7 +381,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name, withholding_tax_rate, tin, address), profiles(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name, withholding_tax_rate, tin, address), profiles!orders_created_by_fkey(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]

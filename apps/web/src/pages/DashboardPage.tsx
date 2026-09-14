@@ -187,7 +187,7 @@ export default function DashboardPage() {
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
       const { data, error } = await supabase
         .from('orders')
-        .select('id, created_by, profiles(full_name), order_items(weight_ordered_kg, price_per_kg)')
+        .select('id, created_by, profiles!orders_created_by_fkey(full_name), order_items(weight_ordered_kg, price_per_kg)')
         .gte('order_date', monthStart)
         .lte('order_date', monthEnd)
       if (error) throw error
