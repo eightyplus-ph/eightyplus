@@ -61,6 +61,7 @@ interface Order {
   payment_proof_url: string | null
   created_by: string | null
   discount_percent: string | null
+  archived_at: string | null
   clients: { company_name: string; withholding_tax_rate: string; tin: string | null; address: string | null } | null
   profiles: { full_name: string } | null
   order_items: OrderItem[]
@@ -316,6 +317,8 @@ export default function OrdersPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [confirmingOrder, setConfirmingOrder] = useState<Order | null>(null)
   const [editingOrder, setEditingOrder] = useState<Order | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
+  const [archivingId, setArchivingId] = useState<string | null>(null)
   const [soaOrder, setSoaOrder] = useState<Order | null>(null)
   const [search, setSearch] = useState('')
 
@@ -388,14 +391,34 @@ export default function OrdersPage() {
     },
   })
 
+  // Archiving is reversible, so archived orders are hidden rather than removed —
+  // the toggle is the only way back to them.
+  const archivedCount = orders.filter(o => o.archived_at).length
+  const inScope = showArchived ? orders : orders.filter(o => !o.archived_at)
+
   const q = search.toLowerCase()
   const visibleOrders = q
-    ? orders.filter(o =>
+    ? inScope.filter(o =>
         o.os_number.toLowerCase().includes(q) ||
         (o.clients?.company_name ?? '').toLowerCase().includes(q) ||
         o.status.includes(q)
       )
-    : orders
+    : inScope
+
+  const setArchived = async (order: Order, archived: boolean) => {
+    setArchivingId(order.id)
+    const patch = archived
+      ? { archived_at: new Date().toISOString(), archived_by: profile?.id ?? null }
+      : { archived_at: null, archived_by: null }
+    const { error } = await supabase.from('orders').update(patch).eq('id', order.id)
+    if (error) window.alert(
+      error.code === '42703'
+        ? 'Archiving needs SQL_MIGRATION_007 — it has not been run on this database yet.'
+        : `Could not archive ${order.os_number}: ${error.message}`)
+    await queryClient.invalidateQueries({ queryKey: ['orders'] })
+    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    setArchivingId(null)
+  }
 
   const addLine = () => setLineItems(prev => [...prev, { uid: uid(), lotId: '', batchId: '', kg: '', pricePerKg: '' }])
   const removeLine = (id: string) => setLineItems(prev => prev.filter(l => l.uid !== id))
@@ -617,7 +640,7 @@ export default function OrdersPage() {
 
       {/* Orders list */}
       <Card>
-        <div className="px-4 py-3 border-b border-gray-100">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-4 flex-wrap">
           <input
             type="search"
             value={search}
@@ -625,6 +648,17 @@ export default function OrdersPage() {
             placeholder="Search by OS#, client, or status…"
             className="w-full max-w-sm h-8 rounded-md border border-gray-200 bg-gray-50 px-3 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
+          {archivedCount > 0 && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={e => setShowArchived(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              Show archived ({archivedCount})
+            </label>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -662,8 +696,8 @@ export default function OrdersPage() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[order.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                          {STATUS_LABELS[order.status] ?? order.status}
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${order.archived_at ? 'bg-gray-100 text-gray-500' : STATUS_COLORS[order.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {order.archived_at ? 'Archived' : STATUS_LABELS[order.status] ?? order.status}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right text-gray-900">
@@ -685,11 +719,27 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="flex gap-2 items-center">
-                          {order.status === 'reserved' && (
+                          {order.status === 'reserved' && !order.archived_at && (
                             <>
                               <button onClick={() => setEditingOrder(order)} className="text-xs text-gray-500 hover:text-blue-600 whitespace-nowrap">Edit</button>
                               <button onClick={() => setConfirmingOrder(order)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
+                              <button
+                                onClick={() => { if (window.confirm(`Archive ${order.os_number}? It stops counting toward the contract and sales, and can be restored later.`)) setArchived(order, true) }}
+                                disabled={archivingId === order.id}
+                                className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {archivingId === order.id ? '…' : 'Archive'}
+                              </button>
                             </>
+                          )}
+                          {order.archived_at && (
+                            <button
+                              onClick={() => setArchived(order, false)}
+                              disabled={archivingId === order.id}
+                              className="text-xs text-gray-500 hover:text-blue-600 disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {archivingId === order.id ? '…' : 'Restore'}
+                            </button>
                           )}
                           {order.status === 'confirmed' && (
                             <span className="flex items-center gap-1.5">

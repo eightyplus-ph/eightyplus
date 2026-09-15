@@ -94,6 +94,7 @@ export default function DashboardPage() {
         .from('orders')
         .select('id, status')
         .in('status', ['reserved', 'confirmed'])
+        .is('archived_at', null)
       if (oErr) throw oErr
 
       const activeOrderIds = (activeOrders ?? []).map(o => o.id)
@@ -190,6 +191,7 @@ export default function DashboardPage() {
         .select('id, created_by, profiles!orders_created_by_fkey(full_name), order_items(weight_ordered_kg, price_per_kg)')
         .gte('order_date', monthStart)
         .lte('order_date', monthEnd)
+        .is('archived_at', null)
       if (error) throw error
       const map = new Map<string, SalesRepRow>()
       for (const o of data ?? []) {
@@ -220,6 +222,7 @@ export default function DashboardPage() {
         .select('status')
         .eq('created_by', profile!.id)
         .in('status', ['reserved', 'confirmed'])
+        .is('archived_at', null)
       if (error) throw error
       const openOrders = (data ?? []).length
       const forDispatch = (data ?? []).filter(o => o.status === 'confirmed').length

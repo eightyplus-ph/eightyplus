@@ -47,6 +47,7 @@ function ClientOrders({ clientId }: { clientId: string }) {
         .from('orders')
         .select('id, os_number, order_date, payment_date, status, order_items(weight_ordered_kg, price_per_kg, lots(name))')
         .eq('client_id', clientId)
+        .is('archived_at', null)
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as unknown as ClientOrder[]

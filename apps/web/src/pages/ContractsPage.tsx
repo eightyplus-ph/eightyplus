@@ -333,6 +333,7 @@ function ContractDetail({ contract, showPrice }: { contract: ContractRow; showPr
         .from('orders')
         .select('id, os_number, order_date, status, scheduled_dispatch_date, order_items(weight_ordered_kg, lots(name)), dispatches(dispatched_date)')
         .eq('contract_id', contract.id)
+        .is('archived_at', null)
         .order('order_date')
       if (error) throw error
       return data as unknown as ContractOrder[]
