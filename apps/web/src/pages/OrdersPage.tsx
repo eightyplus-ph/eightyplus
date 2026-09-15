@@ -669,7 +669,7 @@ export default function OrdersPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Client</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Dates</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Total kg</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-500 whitespace-nowrap">Total kg</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Total Value</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Actions</th>
               </tr>
@@ -690,9 +690,13 @@ export default function OrdersPage() {
                       <td className="px-4 py-3 font-mono text-xs text-gray-700">{order.os_number}</td>
                       <td className="px-4 py-3 font-medium text-gray-900">{order.clients?.company_name ?? '—'}</td>
                       <td className="px-4 py-3">
-                        <span className="text-gray-600">{new Date(order.order_date + 'T00:00:00').toLocaleDateString()}</span>
+                        <span className="text-gray-600 whitespace-nowrap">{new Date(order.order_date + 'T00:00:00').toLocaleDateString()}</span>
                         {order.payment_date && (
-                          <span className="block text-xs text-gray-400">paid {new Date(order.payment_date + 'T00:00:00').toLocaleDateString()}</span>
+                          <span className="block text-xs text-gray-400 whitespace-nowrap">paid {new Date(order.payment_date + 'T00:00:00').toLocaleDateString()}</span>
+                        )}
+                        {/* A ship date is a date — it belongs here, not among the actions. */}
+                        {order.scheduled_dispatch_date && order.status === 'confirmed' && (
+                          <span className="block text-xs text-gray-400 whitespace-nowrap">ships {new Date(order.scheduled_dispatch_date + 'T00:00:00').toLocaleDateString()}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -701,9 +705,9 @@ export default function OrdersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right text-gray-900">
-                        {Math.round(kg)} kg
+                        <span className="whitespace-nowrap tabular-nums">{Math.round(kg).toLocaleString()} kg</span>
                         {partiallyShipped && (
-                          <span className="block text-xs font-medium text-amber-600">{Math.round(dispatched)} of {Math.round(kg)} kg shipped</span>
+                          <span className="block text-xs font-medium text-amber-600 whitespace-nowrap">{Math.round(dispatched).toLocaleString()} of {Math.round(kg).toLocaleString()} kg shipped</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -717,42 +721,52 @@ export default function OrdersPage() {
                           )
                         })()}
                       </td>
+                      {/* Fixed-width slots, one per action. An action a row does not
+                          have leaves its slot empty rather than letting the rest
+                          shift left, so every label sits in the same column. */}
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        <div className="flex gap-2 items-center">
-                          {order.status === 'reserved' && !order.archived_at && (
-                            <>
-                              <button onClick={() => setEditingOrder(order)} className="text-xs text-gray-500 hover:text-blue-600 whitespace-nowrap">Edit</button>
-                              <button onClick={() => setConfirmingOrder(order)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
+                        <div className="grid grid-cols-[5.5rem_2.5rem_4rem_5rem_4.75rem] items-center gap-x-2 text-xs">
+                          <span>
+                            {order.status === 'reserved' && !order.archived_at && (
+                              <button onClick={() => setConfirmingOrder(order)} className="text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
+                            )}
+                            {order.status === 'confirmed' && (
+                              <a href="/dispatches" className="text-green-600 hover:underline whitespace-nowrap">→ Dispatches</a>
+                            )}
+                            {order.archived_at && (
+                              <button
+                                onClick={() => setArchived(order, false)}
+                                disabled={archivingId === order.id}
+                                className="text-blue-600 hover:underline disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {archivingId === order.id ? '…' : 'Restore'}
+                              </button>
+                            )}
+                          </span>
+                          <span>
+                            {order.status === 'reserved' && !order.archived_at && (
+                              <button onClick={() => setEditingOrder(order)} className="text-gray-500 hover:text-blue-600 whitespace-nowrap">Edit</button>
+                            )}
+                          </span>
+                          <span>
+                            {order.status === 'reserved' && !order.archived_at && (
                               <button
                                 onClick={() => { if (window.confirm(`Archive ${order.os_number}? It stops counting toward the contract and sales, and can be restored later.`)) setArchived(order, true) }}
                                 disabled={archivingId === order.id}
-                                className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-50 whitespace-nowrap"
+                                className="text-gray-400 hover:text-gray-700 disabled:opacity-50 whitespace-nowrap"
                               >
                                 {archivingId === order.id ? '…' : 'Archive'}
                               </button>
-                            </>
-                          )}
-                          {order.archived_at && (
-                            <button
-                              onClick={() => setArchived(order, false)}
-                              disabled={archivingId === order.id}
-                              className="text-xs text-gray-500 hover:text-blue-600 disabled:opacity-50 whitespace-nowrap"
-                            >
-                              {archivingId === order.id ? '…' : 'Restore'}
-                            </button>
-                          )}
-                          {order.status === 'confirmed' && (
-                            <span className="flex items-center gap-1.5">
-                              {order.scheduled_dispatch_date && (
-                                <span className="text-xs text-gray-400">{new Date(order.scheduled_dispatch_date + 'T00:00:00').toLocaleDateString()}</span>
-                              )}
-                              <a href="/dispatches" className="text-xs text-green-600 hover:underline whitespace-nowrap">→ Dispatches</a>
-                            </span>
-                          )}
-                          {order.payment_proof_url && (
-                            <button onClick={() => viewProof(order.payment_proof_url!)} className="text-xs text-gray-400 hover:text-gray-600 whitespace-nowrap">View proof</button>
-                          )}
-                          <button onClick={() => setSoaOrder(order)} className="text-xs text-gray-500 hover:text-blue-600 whitespace-nowrap">Statement</button>
+                            )}
+                          </span>
+                          <span>
+                            {order.payment_proof_url && (
+                              <button onClick={() => viewProof(order.payment_proof_url!)} className="text-gray-400 hover:text-gray-600 whitespace-nowrap">View proof</button>
+                            )}
+                          </span>
+                          <span>
+                            <button onClick={() => setSoaOrder(order)} className="text-gray-500 hover:text-blue-600 whitespace-nowrap">Statement</button>
+                          </span>
                         </div>
                       </td>
                     </tr>
