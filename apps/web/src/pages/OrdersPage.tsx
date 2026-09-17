@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import EditReservedOrderDialog from '@/components/EditReservedOrderDialog'
+import RecordPaymentDialog from '@/components/RecordPaymentDialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -318,6 +319,7 @@ export default function OrdersPage() {
   const [confirmingOrder, setConfirmingOrder] = useState<Order | null>(null)
   const [editingOrder, setEditingOrder] = useState<Order | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [recordingPayment, setRecordingPayment] = useState(false)
   const [archivingId, setArchivingId] = useState<string | null>(null)
   const [soaOrder, setSoaOrder] = useState<Order | null>(null)
   const [search, setSearch] = useState('')
@@ -504,7 +506,17 @@ export default function OrdersPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Orders</h1>
-        {!showForm && <Button onClick={() => setShowForm(true)} size="sm">+ New Order</Button>}
+        {!showForm && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setRecordingPayment(true)}
+              className="text-sm text-gray-600 hover:text-blue-600 px-3 py-1.5 rounded border border-gray-200 hover:border-blue-300"
+            >
+              Record payment
+            </button>
+            <Button onClick={() => setShowForm(true)} size="sm">+ New Order</Button>
+          </div>
+        )}
       </div>
 
       {/* New order form */}
@@ -889,6 +901,7 @@ export default function OrdersPage() {
 
       {confirmingOrder && <ConfirmModal order={confirmingOrder} onClose={() => setConfirmingOrder(null)} />}
       {editingOrder && <EditReservedOrderDialog order={editingOrder} onClose={() => setEditingOrder(null)} />}
+      {recordingPayment && <RecordPaymentDialog onClose={() => setRecordingPayment(false)} />}
       {soaOrder && <StatementOfAccount order={soaOrder} onClose={() => setSoaOrder(null)} />}
     </div>
   )
