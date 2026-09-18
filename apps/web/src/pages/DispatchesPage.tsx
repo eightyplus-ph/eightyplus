@@ -24,8 +24,9 @@ interface PendingOrder {
   id: string
   os_number: string
   order_date: string
+  status: string
   scheduled_dispatch_date: string | null
-  clients: { company_name: string } | null
+  clients: { company_name: string; pay_after_dispatch: boolean } | null
   order_items: OrderItem[]
   dispatches: PendingDispatchRecord[]
 }
@@ -250,6 +251,14 @@ function OrderCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-xs text-gray-400">{order.os_number}</span>
             <span className="text-sm font-semibold text-gray-900">{order.clients?.company_name ?? '—'}</span>
+            {order.status === 'reserved' && (
+              <span
+                className="text-[10px] uppercase tracking-wide font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded"
+                title="This client settles after delivery. Nothing has been paid on this order yet."
+              >
+                unpaid
+              </span>
+            )}
             {tag === 'overdue' && (
               <span className="text-xs font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
                 Overdue · {order.scheduled_dispatch_date ? formatDate(order.scheduled_dispatch_date) : ''}
@@ -354,11 +363,16 @@ export default function DispatchesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('id, os_number, order_date, scheduled_dispatch_date, clients(company_name), order_items(id, lot_id, batch_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(dr_number, dispatched_date)')
-        .eq('status', 'confirmed')
+        .select('id, os_number, order_date, status, scheduled_dispatch_date, clients(company_name, pay_after_dispatch), order_items(id, lot_id, batch_id, location_id, weight_ordered_kg, lots(name), locations(name), dispatch_items(weight_dispatched_kg)), dispatches(dr_number, dispatched_date)')
+        .in('status', ['confirmed', 'reserved'])
+        .is('archived_at', null)
         .order('scheduled_dispatch_date', { ascending: true, nullsFirst: false })
       if (error) throw error
-      return (data as unknown as PendingOrder[]).filter(o => orderRemainingKg(o) > 0)
+      // A reserved order only reaches the warehouse if its client settles after
+      // delivery. Everyone else still has to clear the payment gate first.
+      return (data as unknown as PendingOrder[])
+        .filter(o => o.status === 'confirmed' || o.clients?.pay_after_dispatch)
+        .filter(o => orderRemainingKg(o) > 0)
     },
   })
 
