@@ -445,6 +445,43 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     refetchInterval: 30_000,
   })
 
+  // A count is a snapshot of the day it was taken. Anything dispatched after
+  // that has already left the shelf, so approving must SUBTRACT it rather than
+  // silently putting it back — which is what a plain "set to counted" does.
+  const { data: shippedSince = {} } = useQuery<Record<string, { kg: number; refs: string[] }>>({
+    queryKey: ['shipped-since-count', count.id, count.count_date],
+    queryFn: async () => {
+      const { data: disp, error: dErr } = await supabase
+        .from('dispatches')
+        .select('id, dr_number, dispatched_date, orders(os_number, clients(company_name))')
+        .gt('dispatched_date', count.count_date)
+      if (dErr) throw dErr
+      const ids = (disp ?? []).map(d => d.id as string)
+      if (ids.length === 0) return {}
+      const meta = new Map((disp ?? []).map(d => {
+        const o = d.orders as unknown as { os_number: string; clients: { company_name: string } | null } | null
+        return [d.id as string, `DR ${d.dr_number} · ${o?.os_number ?? '—'} · ${o?.clients?.company_name ?? ''}`]
+      }))
+      const { data: lines, error: lErr } = await supabase
+        .from('dispatch_items')
+        .select('weight_dispatched_kg, dispatch_id, order_items(batch_id)')
+        .in('dispatch_id', ids)
+      if (lErr) throw lErr
+      const map: Record<string, { kg: number; refs: string[] }> = {}
+      for (const l of lines ?? []) {
+        const batchId = (l.order_items as unknown as { batch_id: string | null } | null)?.batch_id
+        if (!batchId) continue
+        const e = map[batchId] ?? { kg: 0, refs: [] }
+        const kg = parseFloat(l.weight_dispatched_kg ?? '0')
+        e.kg += kg
+        const ref = meta.get(l.dispatch_id as string)
+        if (ref) e.refs.push(`${ref} — ${kg} kg`)
+        map[batchId] = e
+      }
+      return map
+    },
+  })
+
   const pendingItems  = items.filter(i => !i.approved_at)
   const approvedItems = items.filter(i =>  i.approved_at)
 
@@ -486,8 +523,11 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         }).eq('id', item.id)
       }
 
+      // Stack, don't overwrite: counted on the day, less whatever shipped since.
+      const shipped = shippedSince[item.batch_id]?.kg ?? 0
+      const targetKg = Math.max(0, finalCountedKg - shipped)
       const currentKg = parseFloat(item.batches?.weight_kg ?? item.system_kg)
-      const delta = finalCountedKg - currentKg
+      const delta = targetKg - currentKg
 
       if (Math.abs(delta) >= 0.01) {
         await supabase.from('inventory_transactions').insert([{
@@ -500,7 +540,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
       }
 
       await supabase.from('batches').update({
-        weight_kg: finalCountedKg,
+        weight_kg: targetKg,
         ...(finalSacks != null    && { sacks: finalSacks }),
         ...(finalSackWeight != null && { sack_weight_kg: finalSackWeight }),
       }).eq('id', item.batch_id)
@@ -593,7 +633,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
     return grouped.map(([locName, products]) => (
       <Fragment key={`${locName}-${isPending}`}>
         <tr>
-          <td colSpan={10} className="px-4 pt-4 pb-1.5">
+          <td colSpan={11} className="px-4 pt-4 pb-1.5">
             <span className="text-xs font-bold text-gray-700 uppercase tracking-widest">{locName}</span>
             <div className="mt-1 h-px bg-gray-300" />
           </td>
@@ -601,7 +641,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
         {products.map(([productName, prodItems]) => (
           <Fragment key={productName}>
             <tr>
-              <td colSpan={10} className="px-4 pt-3 pb-1 pl-6">
+              <td colSpan={11} className="px-4 pt-3 pb-1 pl-6">
                 <span className="text-sm font-semibold text-gray-800">{productName}</span>
                 {prodItems.length > 1 && (
                   <span className="ml-2 text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">
@@ -691,6 +731,18 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                   )}
 
                   <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-400">{parseFloat(item.system_kg).toFixed(2)}</td>
+                  {/* What left the shelf after the count was taken — subtracted on approval */}
+                  <td className="px-3 py-2 text-right tabular-nums text-xs">
+                    {(() => {
+                      const sent = shippedSince[item.batch_id]
+                      if (!sent || sent.kg <= 0) return <span className="text-gray-200">—</span>
+                      return (
+                        <span className="text-amber-700 cursor-help" title={sent.refs.join('\n')}>
+                          −{sent.kg.toFixed(2)}
+                        </span>
+                      )
+                    })()}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-xs font-medium text-gray-700">{currentKg.toFixed(2)}</td>
                   <td className="px-3 py-2 text-right"><GapBadge gap={liveGap} /></td>
                   <td className="px-3 py-2 text-xs text-gray-400">
@@ -729,6 +781,7 @@ function ApprovalView({ count, onDone }: { count: PhysicalCount; onDone: () => v
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">+ 1kg bags</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">= kg</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">At count</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Shipped since</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Current</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Gap</th>
                 <th className="px-3 py-2.5" />
