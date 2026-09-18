@@ -182,18 +182,75 @@ export default function TransfersPage() {
     if (!toId)          { setError('Select a destination.'); return }
     if (!weightKg || parseFloat(weightKg) <= 0) { setError('Enter a weight greater than 0.'); return }
 
+    const moveKg    = parseFloat(weightKg)
+    const onHandKg  = parseFloat(resolvedBatch.weight_kg ?? '0')
+    const moveSacks = sacks ? parseInt(sacks) : null
+
+    if (toId === fromId)       { setError('Source and destination are the same.'); return }
+    if (moveKg > onHandKg + 0.005) {
+      setError(`${resolvedBatch.batch_number} holds ${onHandKg} kg — cannot move ${moveKg} kg.`)
+      return
+    }
+
     setLoading(true)
     const { error: tErr } = await supabase.from('transfers').insert([{
       batch_id:         resolvedBatch.id,
       from_location_id: fromId,
       to_location_id:   toId,
-      weight_kg:        parseFloat(weightKg),
-      sacks:            sacks ? parseInt(sacks) : null,
+      weight_kg:        moveKg,
+      sacks:            moveSacks,
       notes:            notes.trim() || null,
     }])
     if (tErr) { setError(tErr.message); setLoading(false); return }
 
-    await supabase.from('batches').update({ location_id: toId }).eq('id', resolvedBatch.id)
+    // Moving everything is just a change of address — the batch stays whole.
+    // Moving part of it has to SPLIT the batch, because a batch can only be in
+    // one warehouse at a time. Before this, a partial move relabelled the whole
+    // batch and silently discarded the weight, which is how 15,840 kg of Cerrado
+    // ended up recorded entirely at Paco when most of it was in Bagtikan.
+    const isWholeBatch = moveKg >= onHandKg - 0.005
+
+    if (isWholeBatch) {
+      const { error } = await supabase.from('batches')
+        .update({ location_id: toId }).eq('id', resolvedBatch.id)
+      if (error) { setError(error.message); setLoading(false); return }
+    } else {
+      const { count } = await supabase.from('batches')
+        .select('id', { count: 'exact', head: true })
+        .eq('source_batch_id', resolvedBatch.id)
+      const childNumber = `${resolvedBatch.batch_number}-T${String((count ?? 0) + 1).padStart(2, '0')}`
+
+      const { data: child, error: cErr } = await supabase.from('batches').insert([{
+        batch_number:    childNumber,
+        lot_id:          resolvedBatch.lot_id,
+        weight_kg:       moveKg.toFixed(2),
+        sacks:           moveSacks,
+        sku_type:        resolvedBatch.sku_type ?? 'commercial',
+        sack_weight_kg:  resolvedBatch.sack_weight_kg ? parseFloat(resolvedBatch.sack_weight_kg) : null,
+        location_id:     toId,
+        source_batch_id: resolvedBatch.id,
+        notes:           notes.trim() || null,
+      }]).select()
+      if (cErr) { setError(cErr.message); setLoading(false); return }
+
+      const remainingSacks = resolvedBatch.sacks != null && moveSacks != null
+        ? Math.max(0, resolvedBatch.sacks - moveSacks)
+        : resolvedBatch.sacks
+      const { error: dErr } = await supabase.from('batches').update({
+        weight_kg: (onHandKg - moveKg).toFixed(2),
+        ...(remainingSacks != null && { sacks: remainingSacks }),
+      }).eq('id', resolvedBatch.id)
+      if (dErr) { setError(dErr.message); setLoading(false); return }
+
+      // The ledger stopped recording transfers on 2026-07-27. It records them again.
+      await supabase.from('inventory_transactions').insert([
+        { batch_id: resolvedBatch.id, type: 'transfer_out', weight_change_kg: -moveKg,
+          notes: `Transferred to ${childNumber}` },
+        { batch_id: child[0].id,      type: 'transfer_in',  weight_change_kg:  moveKg,
+          notes: `Transferred from ${resolvedBatch.batch_number}` },
+      ])
+    }
+
     await queryClient.invalidateQueries({ queryKey: ['transfers'] })
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
     await queryClient.invalidateQueries({ queryKey: ['batches-transfer'] })
