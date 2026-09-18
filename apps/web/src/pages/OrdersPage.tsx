@@ -63,7 +63,7 @@ interface Order {
   created_by: string | null
   discount_percent: string | null
   archived_at: string | null
-  clients: { company_name: string; withholding_tax_rate: string; tin: string | null; address: string | null } | null
+  clients: { company_name: string; withholding_tax_rate: string; tin: string | null; address: string | null; pay_after_dispatch?: boolean } | null
   profiles: { full_name: string } | null
   order_items: OrderItem[]
   dispatches: Dispatch[]
@@ -386,7 +386,7 @@ export default function OrdersPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, clients(company_name, withholding_tax_rate, tin, address), profiles!orders_created_by_fkey(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
+        .select('*, clients(company_name, withholding_tax_rate, tin, address, pay_after_dispatch), profiles!orders_created_by_fkey(full_name), order_items(id, lot_id, location_id, batch_id, weight_ordered_kg, price_per_kg, lots(name), locations(name), batches(batch_number, sku_type, sack_weight_kg), dispatch_items(weight_dispatched_kg)), dispatches(id, dr_number, dispatched_date, receiver_name, dispatch_items(weight_dispatched_kg, order_items(lots(name))))')
         .order('created_at', { ascending: false })
       if (error) throw error
       return data as Order[]
@@ -740,7 +740,11 @@ export default function OrdersPage() {
                         <div className="grid grid-cols-[5.5rem_2.5rem_4rem_5rem_4.75rem] items-center gap-x-2 text-xs">
                           <span>
                             {order.status === 'reserved' && !order.archived_at && (
-                              <button onClick={() => setConfirmingOrder(order)} className="text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
+                              order.clients?.pay_after_dispatch
+                                // Ships before it is paid for, so Confirm would be a dead
+                                // end — send them where the order can actually move.
+                                ? <a href="/dispatches" className="text-green-600 hover:underline whitespace-nowrap" title="This client pays after delivery — dispatch it, then record the payment">→ Dispatches</a>
+                                : <button onClick={() => setConfirmingOrder(order)} className="text-blue-600 hover:underline whitespace-nowrap">Confirm</button>
                             )}
                             {order.status === 'confirmed' && (
                               <a href="/dispatches" className="text-green-600 hover:underline whitespace-nowrap">→ Dispatches</a>
