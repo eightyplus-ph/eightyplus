@@ -376,6 +376,7 @@ export default function ClientsPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
   const toggleExpand = (id: string) => setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
 
   const { data: clients = [], isLoading } = useQuery<Client[]>({
@@ -395,6 +396,18 @@ export default function ClientsPage() {
     return '₱' + parseFloat(val).toLocaleString('en-PH', { minimumFractionDigits: 0 })
   }
 
+  // Search every field someone might actually have to hand — a phone number or
+  // a TIN off an invoice is as likely a starting point as the company name.
+  // Punctuation is stripped so "Coffee Supply Co" also finds "Coffee Supply Co.",
+  // which are the same buyer stored as two rows.
+  const normalize = (v: string) => v.toLowerCase().replace(/[.,\-()\s]+/g, ' ').trim()
+  const q = normalize(search)
+  const visibleClients = q
+    ? clients.filter(c =>
+        [c.company_name, c.brand_name, c.contact_name, c.contact_phone, c.email, c.tin]
+          .some(f => f && normalize(String(f)).includes(q)))
+    : clients
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -403,6 +416,20 @@ export default function ClientsPage() {
       </div>
 
       <Card>
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-4 flex-wrap">
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by company, brand, contact, phone, email, or TIN…"
+            className="w-full max-w-md h-8 rounded-md border border-gray-200 bg-gray-50 px-3 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <span className="text-xs text-gray-400 whitespace-nowrap">
+            {visibleClients.length === clients.length
+              ? `${clients.length} clients`
+              : `${visibleClients.length} of ${clients.length}`}
+          </span>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -422,14 +449,16 @@ export default function ClientsPage() {
               {isLoading && (
                 <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
               )}
-              {!isLoading && clients.length === 0 && (
+              {!isLoading && visibleClients.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
-                    No clients yet. Add your first client to get started.
+                    {search
+                      ? `No client matches "${search}".`
+                      : 'No clients yet. Add your first client to get started.'}
                   </td>
                 </tr>
               )}
-              {clients.map(client => {
+              {visibleClients.map(client => {
                 const isOpen = expanded.has(client.id)
                 return (
                   <>
