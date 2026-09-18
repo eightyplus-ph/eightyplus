@@ -193,10 +193,10 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   const setOverride = (batchId: string, field: keyof RowOverride, value: string | boolean) =>
     setOverrides(prev => ({ ...prev, [batchId]: { ...(prev[batchId] ?? {}), [field]: value } }))
 
-  // CK counts by product and packaging, one column per warehouse — Paco first.
+  // CK counts by product and packaging, one column per warehouse — Bagtikan first.
   // A cell can cover several batches; the largest carries the counted figure and
   // its siblings go to zero, the same rule used when his sheet was applied.
-  const WAREHOUSES = ['Paco Warehouse', 'Bagtikan'] as const
+  const WAREHOUSES = ['Bagtikan', 'Paco Warehouse'] as const
   const packOf = (b: CountBatch) =>
     isFixedWeightSku(b.sku_type) ? 1 : (b.sack_weight_kg ? parseFloat(b.sack_weight_kg) : 1)
 
@@ -314,8 +314,8 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
               <tr className="border-b border-gray-100">
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Product</th>
                 <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Packaging</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Paco WH</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Bagtikan</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Paco WH</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
