@@ -635,11 +635,18 @@ export default function ContractsPage() {
     }
 
     // Insert contract items
+    const inPeriod = new Set(monthRange(form.start_month, form.end_month))
     const itemsToInsert = form.items
       .filter(i => i.product_name.trim())
       .map(i => {
+        // Only months inside the contract period are saved. The schedule state
+        // keeps every month the user has ever typed into, so shortening the end
+        // month used to leave the dropped months in the saved JSON — the header
+        // then read "Sep 26 → Feb 27" while the line carried 14 months and a
+        // total that included them.
         const schedule: Record<string, number> = {}
         for (const [month, kg] of Object.entries(i.schedule)) {
+          if (!inPeriod.has(month)) continue
           const v = parseFloat(kg)
           if (v > 0) schedule[month] = v
         }
