@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useProfile } from '@/lib/profile'
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import EditReservedOrderDialog from '@/components/EditReservedOrderDialog'
 import RecordPaymentDialog from '@/components/RecordPaymentDialog'
+import { priceLineFor } from '@/lib/contract-match'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -352,6 +353,28 @@ export default function OrdersPage() {
     },
   })
 
+  // A contract fixes the price. Fetch its lines so an order tagged to it prices
+  // itself, rather than relying on whoever keys it to remember the rate.
+  const { data: contractLines = [] } = useQuery<{ id: string; product_name: string; price_per_kg: string }[]>({
+    queryKey: ['contract-lines', contractId],
+    enabled: !!contractId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('contract_items').select('id, product_name, price_per_kg').eq('contract_id', contractId)
+      if (error) throw error
+      return data as { id: string; product_name: string; price_per_kg: string }[]
+    },
+  })
+
+  /** The contract price for a lot, or null when no contract line matches it. */
+  const contractPriceFor = (lotId: string): number | null => {
+    if (!contractId || contractLines.length === 0) return null
+    const lotName = lots.find(l => l.id === lotId)?.name
+    if (!lotName) return null
+    const hit = priceLineFor(lotName, contractLines)
+    return hit ? parseFloat(hit.price_per_kg) : null
+  }
+
   const { data: batchesByLot = {} } = useQuery<Record<string, BatchOption[]>>({
     queryKey: ['batches-by-lot'],
     queryFn: async () => {
@@ -422,14 +445,29 @@ export default function OrdersPage() {
     setArchivingId(null)
   }
 
+  // Changing the contract re-prices every line it covers; lines it does not
+  // cover keep whatever price they had and stay editable.
+  useEffect(() => {
+    if (!contractId) return
+    setLineItems(prev => prev.map(l => {
+      if (!l.lotId) return l
+      const p = contractPriceFor(l.lotId)
+      return p != null ? { ...l, pricePerKg: String(p) } : l
+    }))
+  }, [contractId, contractLines])
+
   const addLine = () => setLineItems(prev => [...prev, { uid: uid(), lotId: '', batchId: '', kg: '', pricePerKg: '' }])
   const removeLine = (id: string) => setLineItems(prev => prev.filter(l => l.uid !== id))
   const updateLine = (id: string, field: keyof Omit<LineItemState, 'uid'>, value: string) =>
     setLineItems(prev => prev.map(l => l.uid === id ? { ...l, [field]: value } : l))
   const updateLot = (lineUid: string, lotId: string) => {
     const lot = lots.find(l => l.id === lotId)
+    const contracted = contractPriceFor(lotId)
+    const price = contracted != null
+      ? String(contracted)
+      : lot?.price_per_kg != null ? String(lot.price_per_kg) : ''
     setLineItems(prev => prev.map(l => l.uid === lineUid
-      ? { ...l, lotId, batchId: '', pricePerKg: lot?.price_per_kg != null ? String(lot.price_per_kg) : l.pricePerKg }
+      ? { ...l, lotId, batchId: '', pricePerKg: price || l.pricePerKg }
       : l
     ))
   }
@@ -587,7 +625,26 @@ export default function OrdersPage() {
                           </select>
                         </div>
                         <div className="col-span-2"><Input type="number" min="0" placeholder="kg" value={line.kg} onChange={e => updateLine(line.uid, 'kg', e.target.value)} /></div>
-                        <div className="col-span-2"><Input type="number" min="0" step="0.01" placeholder="₱/kg" value={line.pricePerKg} onChange={e => updateLine(line.uid, 'pricePerKg', e.target.value)} /></div>
+                        <div className="col-span-2">
+                          {(() => {
+                            const locked = line.lotId ? contractPriceFor(line.lotId) : null
+                            return (
+                              <>
+                                <Input
+                                  type="number" min="0" step="0.01" placeholder="₱/kg"
+                                  value={line.pricePerKg}
+                                  onChange={e => updateLine(line.uid, 'pricePerKg', e.target.value)}
+                                  readOnly={locked != null}
+                                  title={locked != null ? 'Set by the contract — edit the contract to change it' : undefined}
+                                  className={locked != null ? 'bg-gray-100 text-gray-600 cursor-not-allowed' : undefined}
+                                />
+                                {locked != null && (
+                                  <span className="text-[10px] text-gray-400">contract price</span>
+                                )}
+                              </>
+                            )
+                          })()}
+                        </div>
                         <div className="col-span-1 text-right text-xs text-gray-500 pr-1">
                           <div>{lineTotal > 0 ? `₱${Math.round(lineTotal).toLocaleString()}` : '—'}</div>
                           <div className="col-span-1 flex justify-end mt-0.5">
