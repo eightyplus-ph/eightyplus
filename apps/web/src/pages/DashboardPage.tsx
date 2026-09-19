@@ -87,7 +87,7 @@ export default function DashboardPage() {
     queryFn: async () => {
       const { data: batches, error: bErr } = await supabase
         .from('batches')
-        .select('lot_id, weight_kg, sacks, sku_type, sack_weight_kg, lots(name), location_id, locations(name)')
+        .select('lot_id, weight_kg, sacks, sku_type, sack_weight_kg, lots(name), location_id, locations(name), contract_item_id')
       if (bErr) throw bErr
 
       const { data: activeOrders, error: oErr } = await supabase
@@ -98,7 +98,9 @@ export default function DashboardPage() {
       if (oErr) throw oErr
 
       const activeOrderIds = (activeOrders ?? []).map(o => o.id)
-      const reservedOrderIds = new Set((activeOrders ?? []).filter(o => o.status === 'reserved').map(o => o.id))
+      // Both statuses commit stock. A confirmed order is paid and waiting for a
+      // truck — treating it as available overstated the figure by 26,893 kg.
+      const reservedOrderIds = new Set((activeOrders ?? []).map(o => o.id))
       const confirmedOrderIds = new Set((activeOrders ?? []).filter(o => o.status === 'confirmed').map(o => o.id))
 
       let orderItems: { lot_id: string; weight_ordered_kg: string; order_id: string }[] = []
@@ -130,6 +132,8 @@ export default function DashboardPage() {
         }
         const row = map.get(lotId)!
         row.inStockKg += kg
+        // Ring-fenced to a contract line: on hand, but not sellable to anyone else.
+        if (b.contract_item_id) row.reservedKg += kg
         row.inStockSacks += sacks
         row.inStockBySku[skuType] = (row.inStockBySku[skuType] ?? 0) + sacks
 

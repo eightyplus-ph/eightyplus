@@ -79,6 +79,35 @@ export default function InventoryPage() {
     },
   })
 
+  // Contract lines available to tag against. Until now a batch could only be
+  // reserved in the post-receipt success card, so a batch that missed that
+  // moment could never be ring-fenced and contract reservations stayed at 0 kg.
+  type ContractLine = { id: string; product_name: string; contracts: { contract_number: string } | null }
+  const { data: contractLines = [] } = useQuery<ContractLine[]>({
+    queryKey: ['contract-lines-all'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('contract_items')
+        .select('id, product_name, contracts!inner(contract_number, status)')
+        .eq('contracts.status', 'active')
+      if (error) throw error
+      return data as unknown as ContractLine[]
+    },
+  })
+
+  const [taggingId, setTaggingId] = useState<string | null>(null)
+
+  const setContractTag = async (batchId: string, contractItemId: string | null) => {
+    setTaggingId(batchId)
+    const { error } = await supabase.from('batches')
+      .update({ contract_item_id: contractItemId }).eq('id', batchId)
+    if (error) window.alert(`Could not change the contract tag: ${error.message}`)
+    await queryClient.invalidateQueries({ queryKey: ['batches'] })
+    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    await queryClient.invalidateQueries({ queryKey: ['lot-positions'] })
+    setTaggingId(null)
+  }
+
   const startEdit = (batch: Batch) => {
     setEditingId(batch.id)
     setEditSacks(String(batch.sacks ?? ''))
@@ -330,9 +359,34 @@ export default function InventoryPage() {
                                     <div>
                                       <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-xs font-medium">Contract</span>
                                       <p className="text-xs text-gray-400 mt-0.5">{batch.contract_items.contracts?.contract_number}</p>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); setContractTag(batch.id, null) }}
+                                        disabled={taggingId === batch.id}
+                                        className="text-[10px] text-gray-400 hover:text-red-600 disabled:opacity-50"
+                                      >
+                                        {taggingId === batch.id ? '…' : 'release'}
+                                      </button>
                                     </div>
                                   ) : (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">Available</span>
+                                    <div onClick={e => e.stopPropagation()}>
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">Available</span>
+                                      {contractLines.length > 0 && (
+                                        <select
+                                          value=""
+                                          onChange={e => e.target.value && setContractTag(batch.id, e.target.value)}
+                                          disabled={taggingId === batch.id}
+                                          title="Reserve this batch against a contract line"
+                                          className="block mt-0.5 text-[10px] text-gray-400 bg-transparent border-0 p-0 hover:text-blue-600 cursor-pointer"
+                                        >
+                                          <option value="">reserve…</option>
+                                          {contractLines.map((cl: ContractLine) => (
+                                            <option key={cl.id} value={cl.id}>
+                                              {cl.contracts?.contract_number} · {cl.product_name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </div>
                                   )}
                                 </td>
 

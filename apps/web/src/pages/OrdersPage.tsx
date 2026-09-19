@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import EditReservedOrderDialog from '@/components/EditReservedOrderDialog'
 import RecordPaymentDialog from '@/components/RecordPaymentDialog'
 import { priceLineFor } from '@/lib/contract-match'
+import { positionsByLot, COMMITTING_STATUSES } from '@/lib/stock'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -375,6 +376,28 @@ export default function OrdersPage() {
     return hit ? parseFloat(hit.price_per_kg) : null
   }
 
+  // Available per lot, on the agreed definition. Until this existed the order
+  // form displayed availability and never checked it, so a lot could be sold
+  // several times over and only the warehouse found out.
+  const { data: positions } = useQuery({
+    queryKey: ['lot-positions'],
+    queryFn: async () => {
+      const [{ data: bs }, { data: os }] = await Promise.all([
+        supabase.from('batches').select('lot_id, weight_kg, contract_item_id').gt('weight_kg', 0),
+        supabase.from('orders').select('id').is('archived_at', null).in('status', COMMITTING_STATUSES),
+      ])
+      const ids = (os ?? []).map(o => o.id as string)
+      let lines: any[] = []
+      if (ids.length) {
+        const { data } = await supabase.from('order_items')
+          .select('lot_id, weight_ordered_kg, dispatch_items(weight_dispatched_kg)')
+          .in('order_id', ids)
+        lines = data ?? []
+      }
+      return positionsByLot(bs ?? [], lines)
+    },
+  })
+
   const { data: batchesByLot = {} } = useQuery<Record<string, BatchOption[]>>({
     queryKey: ['batches-by-lot'],
     queryFn: async () => {
@@ -483,6 +506,25 @@ export default function OrdersPage() {
     e.preventDefault()
     setFormError('')
     if (!clientId) { setFormError('Select a client.'); return }
+    // Refuse to commit more of a lot than is available, counting every line on
+    // this order together — two lines of the same coffee must not each pass.
+    if (positions) {
+      const wanted = new Map<string, number>()
+      for (const l of lineItems) {
+        if (!l.lotId || !(parseFloat(l.kg) > 0)) continue
+        wanted.set(l.lotId, (wanted.get(l.lotId) ?? 0) + parseFloat(l.kg))
+      }
+      for (const [lotId, kg] of wanted) {
+        const avail = positions.get(lotId)?.availableKg ?? 0
+        if (kg > avail + 0.005) {
+          const name = lots.find(l => l.id === lotId)?.name ?? 'That product'
+          setFormError(`${name}: only ${Math.round(avail)} kg available, this order needs ${Math.round(kg)} kg.`)
+          setSubmitting(false)
+          return
+        }
+      }
+    }
+
     const validItems = lineItems.filter(l => l.lotId && l.batchId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0)
     const incompleteItems = lineItems.filter(l => l.lotId && !(l.batchId && parseFloat(l.kg) > 0 && l.pricePerKg !== '' && parseFloat(l.pricePerKg) >= 0))
     if (validItems.length === 0) { setFormError('Add at least one complete line item.'); return }
