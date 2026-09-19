@@ -106,13 +106,19 @@ export default function DashboardPage() {
       const reservedOrderIds = new Set((activeOrders ?? []).map(o => o.id))
       const confirmedOrderIds = new Set((activeOrders ?? []).filter(o => o.status === 'confirmed').map(o => o.id))
 
-      let orderItems: { lot_id: string; weight_ordered_kg: string; order_id: string }[] = []
+      // Net off what has already shipped. A confirmed order with every line
+      // delivered reserves nothing — counting its ordered weight in full made
+      // fully-shipped orders read as live commitments and flagged lots as short.
+      let orderItems: {
+        lot_id: string; weight_ordered_kg: string; order_id: string
+        dispatch_items: { weight_dispatched_kg: string }[] | null
+      }[] = []
       if (activeOrderIds.length > 0) {
         const { data: items } = await supabase
           .from('order_items')
-          .select('lot_id, weight_ordered_kg, order_id')
+          .select('lot_id, weight_ordered_kg, order_id, dispatch_items(weight_dispatched_kg)')
           .in('order_id', activeOrderIds)
-        orderItems = (items ?? []) as typeof orderItems
+        orderItems = (items ?? []) as unknown as typeof orderItems
       }
 
       const map = new Map<string, ProductRow>()
@@ -153,7 +159,10 @@ export default function DashboardPage() {
 
       for (const item of orderItems) {
         const lotId = item.lot_id as string
-        const kg = parseFloat(item.weight_ordered_kg ?? '0')
+        const shipped = (item.dispatch_items ?? [])
+          .reduce((s, d) => s + parseFloat(d.weight_dispatched_kg ?? '0'), 0)
+        const kg = Math.max(0, parseFloat(item.weight_ordered_kg ?? '0') - shipped)
+        if (kg <= 0) continue
         const orderId = item.order_id as string
 
         if (!map.has(lotId)) {
