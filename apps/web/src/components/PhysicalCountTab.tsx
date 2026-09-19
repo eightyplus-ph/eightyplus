@@ -26,6 +26,7 @@ interface PhysicalCount {
 interface CountBatch {
   id: string
   batch_number: string
+  created_at: string
   weight_kg: string
   sacks: number | null
   sack_weight_kg: string | null
@@ -182,7 +183,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
     queryFn: async () => {
       const { data, error } = await supabase
         .from('batches')
-        .select('id, batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lots(name), locations(name)')
+        .select('id, batch_number, created_at, weight_kg, sacks, sack_weight_kg, sku_type, lots(name), locations(name)')
         .gt('weight_kg', 0)
         .order('received_at', { ascending: false })
       if (error) throw error
@@ -192,6 +193,53 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
 
   const setOverride = (batchId: string, field: keyof RowOverride, value: string | boolean) =>
     setOverrides(prev => ({ ...prev, [batchId]: { ...(prev[batchId] ?? {}), [field]: value } }))
+
+  // EXPECTED, the figure a count is really tested against:
+  //     last approved count  +  every ledger row dated after it
+  // batches.weight_kg should equal this now that every write path records a
+  // movement; where it does not, something changed stock without saying so and
+  // that is surfaced rather than hidden.
+  const { data: expectation } = useQuery<{
+    expected: Record<string, number>
+    since: Record<string, { type: string; kg: number; note: string }[]>
+    anchorDate: string | null
+  }>({
+    queryKey: ['count-expectation'],
+    queryFn: async () => {
+      const { data: counts } = await supabase
+        .from('physical_counts').select('id, count_date')
+        .eq('status', 'approved').order('count_date', { ascending: false }).limit(1)
+      const last = counts?.[0]
+      if (!last) return { expected: {}, since: {}, anchorDate: null }
+
+      const { data: items } = await supabase
+        .from('physical_count_items').select('batch_id, counted_kg')
+        .eq('physical_count_id', last.id)
+      // Exclude the rows the anchor count itself wrote when it was approved —
+      // counted_kg already reflects them, so adding them again doubles the figure.
+      const { data: txns } = await supabase
+        .from('inventory_transactions')
+        .select('batch_id, type, weight_change_kg, notes, created_at, physical_count_id')
+        .gt('created_at', `${last.count_date}T23:59:59`)
+        .or(`physical_count_id.is.null,physical_count_id.neq.${last.id}`)
+
+      const expected: Record<string, number> = {}
+      for (const i of items ?? []) expected[i.batch_id as string] = parseFloat(i.counted_kg ?? '0')
+      const since: Record<string, { type: string; kg: number; note: string }[]> = {}
+      for (const t of txns ?? []) {
+        const id = t.batch_id as string
+        const kg = parseFloat(t.weight_change_kg ?? '0')
+        expected[id] = (expected[id] ?? 0) + kg
+        ;(since[id] ??= []).push({ type: t.type as string, kg, note: (t.notes as string) ?? '' })
+      }
+      return { expected, since, anchorDate: last.count_date as string }
+    },
+  })
+
+  const expectedFor = (bs: CountBatch[]) =>
+    bs.reduce((t, b) => t + (expectation?.expected[b.id] ?? parseFloat(b.weight_kg)), 0)
+  const movementsFor = (bs: CountBatch[]) =>
+    bs.flatMap(b => expectation?.since[b.id] ?? [])
 
   // CK counts by product and packaging, one column per warehouse — Bagtikan first.
   // A cell can cover several batches; the largest carries the counted figure and
@@ -234,7 +282,14 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
       if (!rep) continue
       const row = getRow(rep, overrides)
       if (!row.included || row.sacks === '') continue
-      reps.add(rep.id); for (const o of others) zeros.add(o.id)
+      reps.add(rep.id)
+      // A batch created AFTER the count date cannot have been on the sheet, so
+      // zeroing it deletes stock the counter never saw. On 18 Sept this wiped
+      // the Lam Dong and Robusta batches transferred that morning.
+      for (const o of others) {
+        if (o.created_at && o.created_at.slice(0, 10) > countDate) continue
+        zeros.add(o.id)
+      }
     }
     return { reps, zeros }
   })()
@@ -317,13 +372,14 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Bagtikan</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Paco WH</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Counted kg</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">System kg</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Expected kg</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Since last count</th>
                 <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Variance</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">Loading products…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">Loading products…</td></tr>
               )}
               {cells.map(c => {
                 const perWh = WAREHOUSES.map(wh => {
@@ -336,7 +392,12 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                 const anyEntered = perWh.some(w => w.row?.included && w.row.sacks !== '')
                 const countedKg = perWh.reduce((t, w) => t + (w.row?.included ? w.countedKg : 0), 0)
                 const systemKg  = perWh.reduce((t, w) => t + w.systemKg, 0)
-                const variance  = countedKg - systemKg
+                const cellBs    = WAREHOUSES.flatMap(wh => c.byWh[wh] ?? [])
+                const expectedKg = expectation ? expectedFor(cellBs) : systemKg
+                const moves     = movementsFor(cellBs)
+                // book vs expected diverging means stock moved without a ledger row
+                const bookDrift = Math.abs(systemKg - expectedKg) >= 0.01
+                const variance  = countedKg - expectedKg
                 const hasVariance = anyEntered && Math.abs(variance) >= 0.01
                 return (
                   <tr key={`${c.product}-${c.pack}`}
@@ -367,7 +428,27 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                       {anyEntered ? `${countedKg.toFixed(2)} kg` : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2 text-right text-gray-500 tabular-nums text-xs">
-                      {systemKg.toFixed(0)} kg
+                      {expectedKg.toFixed(0)} kg
+                      {bookDrift && (
+                        <span className="block text-[10px] text-red-500"
+                              title={`The book says ${systemKg.toFixed(0)} kg. Stock moved without a recorded movement.`}>
+                          book {systemKg.toFixed(0)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-400">
+                      {moves.length === 0
+                        ? <span className="text-gray-300">no movement</span>
+                        : (() => {
+                            const by: Record<string, number> = {}
+                            for (const m of moves) by[m.type] = (by[m.type] ?? 0) + m.kg
+                            return (
+                              <span title={moves.map(m => `${m.type} ${m.kg > 0 ? '+' : ''}${m.kg} — ${m.note}`).join('\n')}>
+                                {Object.entries(by).map(([t, kg]) =>
+                                  `${t} ${kg > 0 ? '+' : ''}${kg.toFixed(0)}`).join(' · ')}
+                              </span>
+                            )
+                          })()}
                     </td>
                     <td className="px-3 py-2 text-right">
                       {anyEntered ? <GapBadge gap={variance} /> : <span className="text-gray-300">—</span>}
@@ -379,7 +460,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             {includedBatches.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td colSpan={6} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
+                  <td colSpan={7} className="px-3 py-3 text-sm font-semibold text-gray-700 text-right">
                     Net variance · {includedBatches.length} line{includedBatches.length !== 1 ? 's' : ''}
                   </td>
                   <td className="px-3 py-3 text-right"><GapBadge gap={netVariance} /></td>
