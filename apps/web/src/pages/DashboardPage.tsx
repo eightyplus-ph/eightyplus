@@ -82,6 +82,9 @@ export default function DashboardPage() {
     })
   }
 
+  const [overviewFilter, setOverviewFilter] = useState<'active'|'available'|'reserved'|'short'|'dormant'|'all'>('active')
+  const [overviewSearch, setOverviewSearch] = useState('')
+
   const { data: rows = [], isLoading } = useQuery<ProductRow[]>({
     queryKey: ['dashboard'],
     queryFn: async () => {
@@ -215,6 +218,26 @@ export default function DashboardPage() {
 
   const isAdminOrManager = profile?.role === 'admin' || profile?.role === 'manager'
   const canSeeInventory = profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'ops'
+  // A product with nothing in stock, nothing reserved and nothing available is
+  // noise on an overview — 9 of them today. Hidden by default, reachable under
+  // "Dormant" so nothing is silently unreachable.
+  const isDormant = (r: ProductRow) =>
+    r.inStockKg === 0 && r.reservedKg === 0 && r.availableKg === 0
+  const dormantCount = rows.filter(isDormant).length
+
+  const overviewQuery = overviewSearch.trim().toLowerCase()
+  const visibleRows = rows.filter(r => {
+    if (overviewQuery && !r.name.toLowerCase().includes(overviewQuery)) return false
+    switch (overviewFilter) {
+      case 'active':    return !isDormant(r)
+      case 'available': return r.availableKg > 0
+      case 'reserved':  return r.reservedKg > 0
+      case 'short':     return r.reservedKg > r.inStockKg + 0.005
+      case 'dormant':   return isDormant(r)
+      default:          return true
+    }
+  })
+
   const mySales = salesRows.find(r => r.repId === profile?.id)
 
   const { data: myStats } = useQuery({
@@ -318,17 +341,37 @@ export default function DashboardPage() {
       {canSeeInventory && <Card>
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
           <p className="text-sm font-semibold text-gray-900">Product Overview</p>
-          {rows.length > 0 && (
+          {visibleRows.length > 0 && (
             <button
               onClick={() => {
-                const allOpen = rows.every(r => expanded.has(r.lotId))
-                setExpanded(allOpen ? new Set() : new Set(rows.map(r => r.lotId)))
+                const allOpen = visibleRows.every(r => expanded.has(r.lotId))
+                setExpanded(allOpen ? new Set() : new Set(visibleRows.map(r => r.lotId)))
               }}
               className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
             >
-              {rows.every(r => expanded.has(r.lotId)) ? 'Collapse all' : 'Expand all'}
+              {visibleRows.every(r => expanded.has(r.lotId)) ? 'Collapse all' : 'Expand all'}
             </button>
           )}
+        </div>
+        <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-3 flex-wrap">
+          <input
+            type="search" value={overviewSearch} onChange={e => setOverviewSearch(e.target.value)}
+            placeholder="Search product…"
+            className="h-7 w-56 rounded-md border border-gray-200 bg-gray-50 px-2.5 text-xs placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {([
+            ['active', 'Active'], ['available', 'Has available'], ['reserved', 'Has reserved'],
+            ['short', 'Short'], ['dormant', `Dormant (${dormantCount})`], ['all', 'All'],
+          ] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setOverviewFilter(key)}
+              className={`text-xs px-2 py-1 rounded transition-colors ${
+                overviewFilter === key ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-400 hover:text-gray-600'}`}>
+              {label}
+            </button>
+          ))}
+          <span className="text-xs text-gray-400 ml-auto">
+            {visibleRows.length} of {rows.length}
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -346,10 +389,12 @@ export default function DashboardPage() {
               {isLoading && (
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">Loading…</td></tr>
               )}
-              {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">No stock yet.</td></tr>
+              {!isLoading && visibleRows.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400">
+                  {rows.length === 0 ? 'No stock yet.' : 'No product matches this filter.'}
+                </td></tr>
               )}
-              {rows.map(row => {
+              {visibleRows.map(row => {
                 const isExpanded = expanded.has(row.lotId)
                 const uniqueLocations = [...new Set(row.locations.map(l => l.locationName))]
                 const uniqueSkus = [...new Set(row.locations.map(l => l.skuType))]
