@@ -89,12 +89,35 @@ export default function InventoryPage() {
 
   const saveEdit = async (id: string) => {
     setEditSaving(true)
-    await supabase.from('batches').update({
+    // This was the last write path that moved stock without recording it, which
+    // is why `previous count + movements since` could not be trusted. Any change
+    // to the weight now writes its own ledger row.
+    const before = batches.find(b => b.id === id)
+    const wasKg = parseFloat(before?.weight_kg ?? '0')
+    const nowKg = parseFloat(editWeight)
+    const delta = nowKg - wasKg
+
+    const { error } = await supabase.from('batches').update({
       sacks:          parseInt(editSacks) || null,
       sack_weight_kg: parseFloat(editSackWeight) || null,
-      weight_kg:      parseFloat(editWeight),
+      weight_kg:      nowKg,
       received_at:    editDate,
     }).eq('id', id)
+    if (error) { setEditSaving(false); window.alert(`Could not save: ${error.message}`); return }
+
+    if (Math.abs(delta) >= 0.01) {
+      const { error: txErr } = await supabase.from('inventory_transactions').insert([{
+        batch_id: id,
+        type: 'adjustment',
+        weight_change_kg: delta.toFixed(2),
+        notes: `Manual correction on the Inventory page: ${wasKg} kg to ${nowKg} kg`,
+      }])
+      // The weight is already saved; a failed ledger row must be visible, not silent.
+      if (txErr) window.alert(
+        `Stock was updated but the movement was NOT recorded in the ledger: ${txErr.message}\n` +
+        `The next count will show this as an unexplained variance.`)
+    }
+
     await queryClient.invalidateQueries({ queryKey: ['batches'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     setEditingId(null)
