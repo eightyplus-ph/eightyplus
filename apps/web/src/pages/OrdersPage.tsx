@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import EditReservedOrderDialog from '@/components/EditReservedOrderDialog'
 import RecordPaymentDialog from '@/components/RecordPaymentDialog'
 import { priceLineFor } from '@/lib/contract-match'
-import { positionsByLot, COMMITTING_STATUSES } from '@/lib/stock'
+import { positionsByLotLocation, lotLocKey, COMMITTING_STATUSES } from '@/lib/stock'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -383,18 +383,18 @@ export default function OrdersPage() {
     queryKey: ['lot-positions'],
     queryFn: async () => {
       const [{ data: bs }, { data: os }] = await Promise.all([
-        supabase.from('batches').select('lot_id, weight_kg, contract_item_id').gt('weight_kg', 0),
+        supabase.from('batches').select('lot_id, location_id, weight_kg, contract_item_id').gt('weight_kg', 0),
         supabase.from('orders').select('id').is('archived_at', null).in('status', COMMITTING_STATUSES),
       ])
       const ids = (os ?? []).map(o => o.id as string)
       let lines: any[] = []
       if (ids.length) {
         const { data } = await supabase.from('order_items')
-          .select('lot_id, weight_ordered_kg, dispatch_items(weight_dispatched_kg)')
+          .select('lot_id, location_id, weight_ordered_kg, dispatch_items(weight_dispatched_kg)')
           .in('order_id', ids)
         lines = data ?? []
       }
-      return positionsByLot(bs ?? [], lines)
+      return positionsByLotLocation(bs ?? [], lines)
     },
   })
 
@@ -508,17 +508,36 @@ export default function OrdersPage() {
     if (!clientId) { setFormError('Select a client.'); return }
     // Refuse to commit more of a lot than is available, counting every line on
     // this order together — two lines of the same coffee must not each pass.
+    // Hard blocker. Dispatch draws from the warehouse the line is tagged to, so
+    // the check has to be per lot AND per warehouse — a lot-level check passes
+    // an order tagged to the wrong site and it only fails at the loading bay.
     if (positions) {
-      const wanted = new Map<string, number>()
+      const wanted = new Map<string, { kg: number; lotId: string; locId: string | null }>()
       for (const l of lineItems) {
         if (!l.lotId || !(parseFloat(l.kg) > 0)) continue
-        wanted.set(l.lotId, (wanted.get(l.lotId) ?? 0) + parseFloat(l.kg))
+        const batch = (batchesByLot[l.lotId] ?? []).find(b => b.batchId === l.batchId)
+        const locId = batch?.locationId ?? null
+        const k = lotLocKey(l.lotId, locId)
+        const e = wanted.get(k) ?? { kg: 0, lotId: l.lotId, locId }
+        e.kg += parseFloat(l.kg)
+        wanted.set(k, e)
       }
-      for (const [lotId, kg] of wanted) {
-        const avail = positions.get(lotId)?.availableKg ?? 0
-        if (kg > avail + 0.005) {
-          const name = lots.find(l => l.id === lotId)?.name ?? 'That product'
-          setFormError(`${name}: only ${Math.round(avail)} kg available, this order needs ${Math.round(kg)} kg.`)
+      for (const [k, w] of wanted) {
+        const avail = positions.get(k)?.availableKg ?? 0
+        if (w.kg > avail + 0.005) {
+          const name = lots.find(l => l.id === w.lotId)?.name ?? 'That product'
+          const where = (batchesByLot[w.lotId] ?? []).find(b => b.locationId === w.locId)?.locationName
+            ?? 'that warehouse'
+          const elsewhere = [...positions.entries()]
+            .filter(([key, p]) => key.startsWith(`${w.lotId}::`) && key !== k && p.availableKg > 0)
+            .map(([key, p]) => {
+              const loc = (batchesByLot[w.lotId] ?? []).find(b => key.endsWith(b.locationId))?.locationName
+              return `${Math.round(p.availableKg)} kg at ${loc ?? 'another warehouse'}`
+            })
+          setFormError(
+            `${name}: only ${Math.round(avail)} kg available at ${where}, this order needs ${Math.round(w.kg)} kg.` +
+            (elsewhere.length ? ` There is ${elsewhere.join(' and ')} — transfer it first, or pick a batch there.` : '')
+          )
           setSubmitting(false)
           return
         }

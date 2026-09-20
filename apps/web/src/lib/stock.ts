@@ -90,3 +90,47 @@ export function positionsByLot(
 /** Available for one lot; 0 when the lot is unknown. */
 export const availableForLot = (positions: Map<string, LotPosition>, lotId: string) =>
   positions.get(lotId)?.availableKg ?? 0
+
+/* ── Per warehouse ──────────────────────────────────────────────────────────
+ * Dispatch consumes from the warehouse the order line is tagged to, so an order
+ * tagged where the stock is not will pass a lot-level check and then be refused
+ * at the loading bay. The blocker therefore has to be lot AND location.
+ */
+
+export interface LocatedBatch extends StockBatch { location_id: string | null }
+export interface LocatedLine extends CommittingLine { location_id: string | null }
+
+export const lotLocKey = (lotId: string, locationId: string | null) =>
+  `${lotId}::${locationId ?? 'none'}`
+
+/** Position per lot × warehouse, same definition of reserved as positionsByLot. */
+export function positionsByLotLocation(
+  batches: LocatedBatch[],
+  lines: LocatedLine[],
+): Map<string, LotPosition> {
+  const out = new Map<string, LotPosition>()
+  const blank = (): LotPosition => ({
+    onHandKg: 0, contractReservedKg: 0, orderReservedKg: 0, reservedKg: 0, availableKg: 0,
+  })
+  for (const b of batches) {
+    if (!b.lot_id) continue
+    const k = lotLocKey(b.lot_id, b.location_id)
+    const p = out.get(k) ?? blank()
+    const kg = typeof b.weight_kg === 'number' ? b.weight_kg : parseFloat(b.weight_kg ?? '0') || 0
+    p.onHandKg += kg
+    if (b.contract_item_id) p.contractReservedKg += kg
+    out.set(k, p)
+  }
+  for (const l of lines) {
+    if (!l.lot_id) continue
+    const k = lotLocKey(l.lot_id, l.location_id)
+    const p = out.get(k) ?? blank()
+    p.orderReservedKg += outstandingKg(l)
+    out.set(k, p)
+  }
+  for (const p of out.values()) {
+    p.reservedKg = p.contractReservedKg + p.orderReservedKg
+    p.availableKg = Math.max(0, p.onHandKg - p.reservedKg)
+  }
+  return out
+}
