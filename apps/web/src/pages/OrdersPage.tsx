@@ -589,6 +589,9 @@ export default function OrdersPage() {
     await queryClient.invalidateQueries({ queryKey: ['orders'] })
     await queryClient.invalidateQueries({ queryKey: ['batches-by-lot'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    // Without this the availability cache still shows the stock this order just
+    // committed, so the next order is judged against a figure that is already spent.
+    await queryClient.invalidateQueries({ queryKey: ['lot-positions'] })
     resetForm(); setSubmitting(false)
   }
 
@@ -679,7 +682,15 @@ export default function OrdersPage() {
                               const skuLabel = b.skuType === 'retail_1kg' ? '1 kg bag' : (b.sackWeightKg ? `${b.sackWeightKg} kg/sk` : 'sack')
                               return (
                                 <option key={b.batchId} value={b.batchId}>
-                                  {b.locationName} · {skuLabel} · {Math.round(b.availableKg)} kg
+                                  {b.locationName} · {skuLabel} · {(() => {
+                                    // Physical weight is not what can be sold. Show the
+                                    // uncommitted figure, because that is what the
+                                    // blocker judges the line against.
+                                    const free = positions?.get(lotLocKey(line.lotId, b.locationId))?.availableKg
+                                    return free === undefined
+                                      ? `${Math.round(b.availableKg)} kg`
+                                      : `${Math.round(free)} kg free of ${Math.round(b.availableKg)}`
+                                  })()}
                                 </option>
                               )
                             })}
