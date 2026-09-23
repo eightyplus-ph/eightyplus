@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import EditReservedOrderDialog from '@/components/EditReservedOrderDialog'
 import RecordPaymentDialog from '@/components/RecordPaymentDialog'
 import { priceLineFor } from '@/lib/contract-match'
-import { positionsByLotLocation, lotLocKey, COMMITTING_STATUSES } from '@/lib/stock'
+import { positionsByLotLocation, lotLocKey, outstandingKg, COMMITTING_STATUSES } from '@/lib/stock'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -379,24 +379,42 @@ export default function OrdersPage() {
   // Available per lot, on the agreed definition. Until this existed the order
   // form displayed availability and never checked it, so a lot could be sold
   // several times over and only the warehouse found out.
-  const { data: positions } = useQuery({
+  const { data: stockPos } = useQuery({
     queryKey: ['lot-positions'],
     queryFn: async () => {
       const [{ data: bs }, { data: os }] = await Promise.all([
         supabase.from('batches').select('lot_id, location_id, weight_kg, contract_item_id').gt('weight_kg', 0),
-        supabase.from('orders').select('id').is('archived_at', null).in('status', COMMITTING_STATUSES),
+        supabase.from('orders').select('id, os_number').is('archived_at', null).in('status', COMMITTING_STATUSES),
       ])
       const ids = (os ?? []).map(o => o.id as string)
       let lines: any[] = []
       if (ids.length) {
         const { data } = await supabase.from('order_items')
-          .select('lot_id, location_id, weight_ordered_kg, dispatch_items(weight_dispatched_kg)')
+          .select('order_id, lot_id, location_id, weight_ordered_kg, dispatch_items(weight_dispatched_kg)')
           .in('order_id', ids)
         lines = data ?? []
       }
-      return positionsByLotLocation(bs ?? [], lines)
+      // Who is holding the stock. "0 kg free" without a name sends people hunting
+      // through the order list; the reservation always has an owner, so name it.
+      // Built from the same lines and the same outstandingKg() the position uses,
+      // so the figure quoted can never disagree with the figure that blocked you.
+      const osById = new Map((os ?? []).map(o => [o.id as string, o.os_number as string]))
+      const holders = new Map<string, { os: string; kg: number }[]>()
+      for (const l of lines) {
+        const kg = outstandingKg(l)
+        if (!l.lot_id || kg <= 0) continue
+        const k = lotLocKey(l.lot_id, l.location_id ?? null)
+        const list = holders.get(k) ?? []
+        const label = osById.get(l.order_id) ?? '(unnumbered)'
+        const hit = list.find(x => x.os === label)
+        if (hit) hit.kg += kg; else list.push({ os: label, kg })
+        holders.set(k, list)
+      }
+      for (const list of holders.values()) list.sort((a, b) => b.kg - a.kg)
+      return { positions: positionsByLotLocation(bs ?? [], lines), holders }
     },
   })
+  const positions = stockPos?.positions
 
   const { data: batchesByLot = {} } = useQuery<Record<string, BatchOption[]>>({
     queryKey: ['batches-by-lot'],
@@ -534,8 +552,21 @@ export default function OrdersPage() {
               const loc = (batchesByLot[w.lotId] ?? []).find(b => key.endsWith(b.locationId))?.locationName
               return `${Math.round(p.availableKg)} kg at ${loc ?? 'another warehouse'}`
             })
+          // Name the orders holding it. Stock reserved by a contract tag has no
+          // order number, so that case is reported as itself rather than omitted —
+          // otherwise the shortfall looks unattributed and reads as a bug.
+          const p = positions.get(k)
+          const held = (stockPos?.holders.get(k) ?? [])
+            .map(h => `${h.os} (${Math.round(h.kg)} kg)`)
+          const heldBy = held.length
+            ? ` Reserved by ${held.join(', ')}.`
+            : (p && p.contractReservedKg > 0
+              ? ` ${Math.round(p.contractReservedKg)} kg is tagged to a contract and cannot be sold from here.`
+              : '')
           setFormError(
             `${name}: only ${Math.round(avail)} kg available at ${where}, this order needs ${Math.round(w.kg)} kg.` +
+            (p ? ` ${Math.round(p.onHandKg)} kg on hand, ${Math.round(p.reservedKg)} kg reserved.` : '') +
+            heldBy +
             (elsewhere.length ? ` There is ${elsewhere.join(' and ')} — transfer it first, or pick a batch there.` : '')
           )
           setSubmitting(false)

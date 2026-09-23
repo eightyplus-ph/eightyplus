@@ -26,3 +26,9 @@ Thumbs.db
 # Supabase local (if added later)
 supabase/.temp/
 .vercel
+
+# A literal ${HOME} directory. Tooling that reads an unexpanded "${HOME}/..."
+# path treats it as RELATIVE and creates this folder under the current working
+# directory, filling it with private assistant memory. packages/db and apps/web
+# already had local rules; this root rule covers any future package.
+${HOME}/
