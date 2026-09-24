@@ -93,6 +93,84 @@ function groupByLocProduct<T>(
   return Array.from(locMap.entries()).map(([loc, pm]) => [loc, Array.from(pm.entries())])
 }
 
+// ─── Shape shared by the entry screen and the printed sheet ───────────────────
+// One row per product × packaging, one column per warehouse, Bagtikan first.
+// Both surfaces build from this, so a printed sheet and the screen it is keyed
+// into can never be in a different order — the counter reads straight down.
+
+const WAREHOUSES = ['Bagtikan', 'Paco Warehouse'] as const
+
+const packOf = (b: CountBatch) =>
+  isFixedWeightSku(b.sku_type) ? 1 : (b.sack_weight_kg ? parseFloat(b.sack_weight_kg) : 1)
+
+interface CountCell { product: string; pack: number; byWh: Record<string, CountBatch[]> }
+
+function buildCells(batches: CountBatch[]): CountCell[] {
+  const map = new Map<string, CountCell>()
+  for (const b of batches) {
+    const product = b.lots?.name ?? 'Unknown product'
+    const pack = packOf(b)
+    const key = `${product}||${pack}`
+    const e = map.get(key) ?? { product, pack, byWh: {} }
+    const wh = b.locations?.name ?? 'Untagged'
+    ;(e.byWh[wh] ??= []).push(b)
+    map.set(key, e)
+  }
+  for (const e of map.values())
+    for (const list of Object.values(e.byWh))
+      list.sort((a, b) => parseFloat(b.weight_kg) - parseFloat(a.weight_kg))
+  // Packaging descends within a product: a counter stands in front of one coffee
+  // and reads sacks before bags, which is the order the bays are stacked in.
+  return [...map.values()].sort((a, b) =>
+    a.product.localeCompare(b.product) || b.pack - a.pack)
+}
+
+// EXPECTED, the figure a count is really tested against:
+//     last approved count  +  every ledger row dated after it
+// batches.weight_kg should equal this now that every write path records a
+// movement; where it does not, something changed stock without saying so and
+// that is surfaced rather than hidden.
+interface Expectation {
+  expected: Record<string, number>
+  since: Record<string, { type: string; kg: number; note: string }[]>
+  anchorDate: string | null
+}
+
+function useCountExpectation() {
+  return useQuery<Expectation>({
+    queryKey: ['count-expectation'],
+    queryFn: async () => {
+      const { data: counts } = await supabase
+        .from('physical_counts').select('id, count_date')
+        .eq('status', 'approved').order('count_date', { ascending: false }).limit(1)
+      const last = counts?.[0]
+      if (!last) return { expected: {}, since: {}, anchorDate: null }
+
+      const { data: items } = await supabase
+        .from('physical_count_items').select('batch_id, counted_kg')
+        .eq('physical_count_id', last.id)
+      // Exclude the rows the anchor count itself wrote when it was approved —
+      // counted_kg already reflects them, so adding them again doubles the figure.
+      const { data: txns } = await supabase
+        .from('inventory_transactions')
+        .select('batch_id, type, weight_change_kg, notes, created_at, physical_count_id')
+        .gt('created_at', `${last.count_date}T23:59:59`)
+        .or(`physical_count_id.is.null,physical_count_id.neq.${last.id}`)
+
+      const expected: Record<string, number> = {}
+      for (const i of items ?? []) expected[i.batch_id as string] = parseFloat(i.counted_kg ?? '0')
+      const since: Record<string, { type: string; kg: number; note: string }[]> = {}
+      for (const t of txns ?? []) {
+        const id = t.batch_id as string
+        const kg = parseFloat(t.weight_change_kg ?? '0')
+        expected[id] = (expected[id] ?? 0) + kg
+        ;(since[id] ??= []).push({ type: t.type as string, kg, note: (t.notes as string) ?? '' })
+      }
+      return { expected, since, anchorDate: last.count_date as string }
+    },
+  })
+}
+
 // ─── Batch row override state ─────────────────────────────────────────────────
 
 interface RowOverride { included?: boolean; sacks?: string; sackWeightKg?: string; extraBags?: string }
@@ -119,15 +197,228 @@ function computeTotalKg(sacks: string, sackWeightKg: string, extraBags: string):
   return sacksKg + bagsKg
 }
 
+// ─── Printed count sheet ──────────────────────────────────────────────────────
+// Paper on purpose: the bays have no signal and gloves do not work on glass.
+//
+// The sheet is BLIND by default — it carries no expected figure. The costliest
+// failure in this system has not been miscounting, it is a warehouse being
+// carried forward instead of walked, and a printed expectation makes that both
+// easier to do and impossible to detect afterwards: a copied figure and a real
+// recount are byte-identical on paper. Paco read Robusta 315 / Lam Dong 342 /
+// Cerrado 498 on four consecutive counts. Expected is revealed on screen the
+// moment a row is keyed, so the counter still gets the feedback — just after
+// committing to a number rather than before.
+//
+// "Print with expected" exists for spot-checks and for a second pass on a bay
+// that already came back wrong. It stamps the sheet, so the two kinds of sheet
+// can never be mistaken for each other later.
+
+const SHEET_PRINT_CSS = `@media print {
+  body * { visibility: hidden !important; }
+  #count-sheet, #count-sheet * { visibility: visible !important; }
+  #count-sheet { position: absolute; left: 0; top: 0; width: 100%; }
+  .sheet-noprint { display: none !important; }
+  .sheet-page { break-after: page; }
+  .sheet-page:last-child { break-after: auto; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  @page { size: A4 portrait; margin: 12mm; }
+}`
+
+function CountSheetDialog({ onClose }: { onClose: () => void }) {
+  const [countDate, setCountDate] = useState(todayStr())
+  const [picked, setPicked] = useState<string[]>([...WAREHOUSES])
+  const [includeZero, setIncludeZero] = useState(false)
+  const [showExpected, setShowExpected] = useState(false)
+
+  // No weight filter here, unlike the entry screen: a batch the book says is
+  // empty is exactly the case worth walking. Robusta 60kg at Bagtikan read 0 on
+  // the book while three sacks sat on the floor.
+  const { data: batches = [], isLoading } = useQuery<CountBatch[]>({
+    queryKey: ['batches-for-sheet'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('batches')
+        .select('id, batch_number, created_at, weight_kg, sacks, sack_weight_kg, sku_type, lots(name), locations(name)')
+        .order('received_at', { ascending: false })
+      if (error) throw error
+      return data as unknown as CountBatch[]
+    },
+  })
+  const { data: expectation } = useCountExpectation()
+
+  const expectedFor = (bs: CountBatch[]) =>
+    bs.reduce((t, b) => t + (expectation?.expected[b.id] ?? parseFloat(b.weight_kg)), 0)
+
+  const allCells = buildCells(batches)
+  const rowsFor = (wh: string) => allCells
+    .map(c => ({ c, bs: c.byWh[wh] ?? [] }))
+    .filter(({ bs }) => bs.length > 0)
+    .filter(({ bs }) => includeZero || bs.some(b => parseFloat(b.weight_kg) > 0))
+
+  const printedAt = new Date().toLocaleString('en-PH', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+  const dateLabel = new Date(countDate + 'T00:00:00')
+    .toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric' })
+  const pages = picked.filter(wh => rowsFor(wh).length > 0)
+
+  const toggleWh = (wh: string) =>
+    setPicked(p => p.includes(wh) ? p.filter(x => x !== wh) : [...p, wh])
+
+  const box = 'inline-block border border-gray-400 h-7 w-20 align-middle'
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0"
+         onClick={onClose}>
+      <style>{SHEET_PRINT_CSS}</style>
+      <div className="bg-white w-full max-w-4xl my-4 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
+
+        <div className="sheet-noprint px-6 py-4 border-b border-gray-200 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-gray-700">Print count sheet</span>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => window.print()} disabled={pages.length === 0}>Print / Save PDF</Button>
+              <Button size="sm" variant="outline" onClick={onClose}>Close</Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1.5">
+              <Label>Count date</Label>
+              <Input type="date" value={countDate} onChange={e => setCountDate(e.target.value)} className="w-44" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Warehouses</Label>
+              <div className="flex gap-3 h-9 items-center">
+                {WAREHOUSES.map(wh => (
+                  <label key={wh} className="flex items-center gap-1.5 text-sm text-gray-700">
+                    <input type="checkbox" checked={picked.includes(wh)} onChange={() => toggleWh(wh)} />
+                    {wh === 'Paco Warehouse' ? 'Paco WH' : wh}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <label className="flex items-center gap-1.5 text-sm text-gray-700 h-9">
+              <input type="checkbox" checked={includeZero} onChange={e => setIncludeZero(e.target.checked)} />
+              Include products the book shows as empty
+            </label>
+          </div>
+          <label className="flex items-start gap-2 text-sm text-gray-700 rounded-md bg-amber-50 border border-amber-200 px-3 py-2">
+            <input type="checkbox" className="mt-0.5" checked={showExpected}
+                   onChange={e => setShowExpected(e.target.checked)} />
+            <span>
+              <span className="font-medium">Print with expected figures</span> — spot-check only.
+              <span className="block text-xs text-amber-800 mt-0.5">
+                A printed expectation is what a tired counter writes down. Use this to re-check a bay
+                that already came back wrong, not to take a count. The sheet is stamped either way.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div id="count-sheet" className="px-6 py-5 text-[13px] text-gray-900">
+          {isLoading && <p className="text-gray-400">Loading products…</p>}
+          {!isLoading && pages.length === 0 && (
+            <p className="text-gray-400">Nothing to print — pick a warehouse with stock, or include empty products.</p>
+          )}
+          {pages.map((wh, i) => (
+            <div key={wh} className="sheet-page">
+              <div className="flex items-start justify-between border-b-2 border-gray-800 pb-2">
+                <div>
+                  <div className="text-base font-bold tracking-tight">EIGHTYPLUS — PHYSICAL COUNT SHEET</div>
+                  <div className="mt-1 text-sm">
+                    Warehouse: <span className="font-semibold">{wh === 'Paco Warehouse' ? 'PACO WH' : wh.toUpperCase()}</span>
+                    <span className="mx-3 text-gray-300">|</span>
+                    Count date: <span className="font-semibold">{dateLabel}</span>
+                  </div>
+                  <div className="mt-1 text-sm">Counted by: <span className="inline-block border-b border-gray-400 w-52 align-bottom" /></div>
+                </div>
+                <div className="text-right text-xs text-gray-500 shrink-0">
+                  <div>Sheet {i + 1} of {pages.length}</div>
+                  <div className="mt-0.5">Printed {printedAt}</div>
+                  {showExpected && (
+                    <div className="mt-1.5 inline-block border border-gray-800 px-1.5 py-0.5 font-bold tracking-wide">
+                      SPOT CHECK — EXPECTED SHOWN
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <table className="w-full mt-3 border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-400 text-[11px] uppercase tracking-wide text-gray-600">
+                    <th className="text-left py-1.5 pr-2 font-semibold">Product</th>
+                    <th className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">Packaging</th>
+                    {showExpected && <th className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">Expected</th>}
+                    <th className="text-center py-1.5 px-2 font-semibold w-24">Sacks</th>
+                    <th className="text-center py-1.5 pl-2 font-semibold w-24">Loose kg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rowsFor(wh).map(({ c, bs }, idx, arr) => {
+                    // A rule between products, not between packagings of the same
+                    // product, so the eye groups the way the bays are stacked.
+                    const lastOfProduct = idx === arr.length - 1 || arr[idx + 1].c.product !== c.product
+                    return (
+                      <tr key={`${c.product}-${c.pack}`}
+                          className={lastOfProduct ? 'border-b border-gray-300' : ''}>
+                        <td className="py-1.5 pr-2 align-middle">{c.product}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap">{c.pack} kg</td>
+                        {showExpected && (
+                          <td className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap">
+                            {expectedFor(bs).toFixed(0)} kg
+                          </td>
+                        )}
+                        <td className="py-1.5 px-2 text-center"><span className={box} /></td>
+                        {/* Loose kilos get their own box because a part-sack pick cannot be
+                            written in whole sacks — forcing it into the sack box is what
+                            produced variances that were never real. 1 kg bags have no
+                            remainder to express, so the box is omitted there. */}
+                        <td className="py-1.5 pl-2 text-center">
+                          {c.pack === 1 ? <span className="text-gray-300">—</span> : <span className={box} />}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+
+              <div className="mt-4 pt-3 border-t border-gray-400 text-xs space-y-3">
+                {/* Blank means NOT COUNTED and leaves stock untouched. That rule already
+                    governs the entry screen; the paper has to say it too, or a bay nobody
+                    walked comes back looking like a bay that was counted as empty. */}
+                <p className="text-gray-600">
+                  Leave a row <span className="font-semibold">blank</span> if you did not count it — blank leaves
+                  the stock alone. Write <span className="font-semibold">0</span> only if the bay is genuinely empty.
+                </p>
+                <div>Bays not counted, and why: <span className="inline-block border-b border-gray-400 w-full max-w-xl align-bottom h-4" /></div>
+                <div className="flex gap-10 pt-1">
+                  <div className="flex-1">Signature: <span className="inline-block border-b border-gray-400 w-48 align-bottom h-4" /></div>
+                  <div>Time finished: <span className="inline-block border-b border-gray-400 w-24 align-bottom h-4" /></div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── History ──────────────────────────────────────────────────────────────────
 
 function CountHistory({ counts, onStart }: { counts: PhysicalCount[]; onStart: () => void }) {
   const completed = counts.filter(c => c.status === 'approved' || c.status === 'rejected')
+  const [sheet, setSheet] = useState(false)
   return (
     <div className="space-y-4">
+      {sheet && <CountSheetDialog onClose={() => setSheet(false)} />}
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">No active count session.</p>
-        <Button onClick={onStart}>Start Physical Count</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setSheet(true)}>Print count sheet</Button>
+          <Button onClick={onStart}>Start Physical Count</Button>
+        </div>
       </div>
       {completed.length > 0 && (
         <Card>
@@ -177,6 +468,7 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   const [overrides, setOverrides] = useState<Overrides>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [sheet, setSheet] = useState(false)
 
   const { data: batches = [], isLoading } = useQuery<CountBatch[]>({
     queryKey: ['batches-for-count'],
@@ -194,80 +486,16 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
   const setOverride = (batchId: string, field: keyof RowOverride, value: string | boolean) =>
     setOverrides(prev => ({ ...prev, [batchId]: { ...(prev[batchId] ?? {}), [field]: value } }))
 
-  // EXPECTED, the figure a count is really tested against:
-  //     last approved count  +  every ledger row dated after it
-  // batches.weight_kg should equal this now that every write path records a
-  // movement; where it does not, something changed stock without saying so and
-  // that is surfaced rather than hidden.
-  const { data: expectation } = useQuery<{
-    expected: Record<string, number>
-    since: Record<string, { type: string; kg: number; note: string }[]>
-    anchorDate: string | null
-  }>({
-    queryKey: ['count-expectation'],
-    queryFn: async () => {
-      const { data: counts } = await supabase
-        .from('physical_counts').select('id, count_date')
-        .eq('status', 'approved').order('count_date', { ascending: false }).limit(1)
-      const last = counts?.[0]
-      if (!last) return { expected: {}, since: {}, anchorDate: null }
-
-      const { data: items } = await supabase
-        .from('physical_count_items').select('batch_id, counted_kg')
-        .eq('physical_count_id', last.id)
-      // Exclude the rows the anchor count itself wrote when it was approved —
-      // counted_kg already reflects them, so adding them again doubles the figure.
-      const { data: txns } = await supabase
-        .from('inventory_transactions')
-        .select('batch_id, type, weight_change_kg, notes, created_at, physical_count_id')
-        .gt('created_at', `${last.count_date}T23:59:59`)
-        .or(`physical_count_id.is.null,physical_count_id.neq.${last.id}`)
-
-      const expected: Record<string, number> = {}
-      for (const i of items ?? []) expected[i.batch_id as string] = parseFloat(i.counted_kg ?? '0')
-      const since: Record<string, { type: string; kg: number; note: string }[]> = {}
-      for (const t of txns ?? []) {
-        const id = t.batch_id as string
-        const kg = parseFloat(t.weight_change_kg ?? '0')
-        expected[id] = (expected[id] ?? 0) + kg
-        ;(since[id] ??= []).push({ type: t.type as string, kg, note: (t.notes as string) ?? '' })
-      }
-      return { expected, since, anchorDate: last.count_date as string }
-    },
-  })
+  const { data: expectation } = useCountExpectation()
 
   const expectedFor = (bs: CountBatch[]) =>
     bs.reduce((t, b) => t + (expectation?.expected[b.id] ?? parseFloat(b.weight_kg)), 0)
   const movementsFor = (bs: CountBatch[]) =>
     bs.flatMap(b => expectation?.since[b.id] ?? [])
 
-  // CK counts by product and packaging, one column per warehouse — Bagtikan first.
   // A cell can cover several batches; the largest carries the counted figure and
-  // its siblings go to zero, the same rule used when his sheet was applied.
-  const WAREHOUSES = ['Bagtikan', 'Paco Warehouse'] as const
-  const packOf = (b: CountBatch) =>
-    isFixedWeightSku(b.sku_type) ? 1 : (b.sack_weight_kg ? parseFloat(b.sack_weight_kg) : 1)
-
-  const cells = (() => {
-    const map = new Map<string, {
-      product: string; pack: number
-      byWh: Record<string, CountBatch[]>
-    }>()
-    for (const b of batches) {
-      const product = b.lots?.name ?? 'Unknown product'
-      const pack = packOf(b)
-      const key = `${product}||${pack}`
-      const e = map.get(key) ?? { product, pack, byWh: {} }
-      const wh = b.locations?.name ?? 'Untagged'
-      ;(e.byWh[wh] ??= []).push(b)
-      map.set(key, e)
-    }
-    for (const e of map.values())
-      for (const list of Object.values(e.byWh))
-        list.sort((a, b) => parseFloat(b.weight_kg) - parseFloat(a.weight_kg))
-    return [...map.values()].sort((a, b) =>
-      a.product.localeCompare(b.product) || a.pack - b.pack)
-  })()
+  // its siblings go to zero, the same rule used when CK's sheet was applied.
+  const cells = buildCells(batches)
 
   /** The batch a cell writes to, plus the siblings that must be zeroed with it. */
   const cellBatches = (c: { byWh: Record<string, CountBatch[]> }, wh: string) => {
@@ -359,8 +587,12 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
             <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any notes about this count…" />
           </div>
         </div>
-        <button onClick={onCancel} className="text-sm text-gray-400 hover:text-gray-600 mt-1">Cancel</button>
+        <div className="flex items-center gap-3 mt-1">
+          <Button size="sm" variant="outline" onClick={() => setSheet(true)}>Print count sheet</Button>
+          <button onClick={onCancel} className="text-sm text-gray-400 hover:text-gray-600">Cancel</button>
+        </div>
       </div>
+      {sheet && <CountSheetDialog onClose={() => setSheet(false)} />}
 
       <Card>
         <div className="overflow-x-auto">
