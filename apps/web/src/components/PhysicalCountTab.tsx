@@ -213,6 +213,18 @@ function computeTotalKg(sacks: string, sackWeightKg: string, extraBags: string):
 // that already came back wrong. It stamps the sheet, so the two kinds of sheet
 // can never be mistaken for each other later.
 
+/**
+ * Expected, written the way a person at a pallet reads it: whole sacks, plus the
+ * loose kilos that cannot be expressed as one. "20,520 kg" is unusable in front of
+ * a stack — "342 sk" is the number they are about to compare against.
+ */
+function expectedInSacks(kg: number, pack: number): string {
+  if (pack <= 1) return `${Math.round(kg)} bag${Math.round(kg) === 1 ? '' : 's'}`
+  const sacks = Math.floor(kg / pack)
+  const loose = Math.round((kg - sacks * pack) * 100) / 100
+  return loose > 0.005 ? `${sacks} sk + ${loose} kg` : `${sacks} sk`
+}
+
 const SHEET_PRINT_CSS = `@media print {
   body * { visibility: hidden !important; }
   #count-sheet, #count-sheet * { visibility: visible !important; }
@@ -366,7 +378,7 @@ function CountSheetDialog({ onClose }: { onClose: () => void }) {
                         <td className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap">{c.pack} kg</td>
                         {showExpected && (
                           <td className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap">
-                            {expectedFor(bs).toFixed(0)} kg
+                            {expectedInSacks(expectedFor(bs), c.pack)}
                           </td>
                         )}
                         <td className="py-1.5 px-2 text-center"><span className={box} /></td>
