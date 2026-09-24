@@ -53,6 +53,76 @@ function formatDate(d: string) {
 
 // ─── Dispatch form ────────────────────────────────────────────────────────────
 
+/**
+ * Move `kg` of a lot from one warehouse to another and record it.
+ *
+ * Called when a dispatch was picked somewhere other than where the order sourced
+ * it. Mirrors the Transfers page exactly — a whole batch changes address, a part
+ * batch splits into a `-Tnn` child — so a transfer generated here is
+ * indistinguishable from one a human entered, and the ledger balances either way.
+ */
+async function transferBetween(
+  lotId: string, fromId: string, toId: string, kg: number,
+  dispatchId: string, note: string,
+): Promise<boolean> {
+  const { data: pool } = await supabase
+    .from('batches').select('id, batch_number, weight_kg, sacks, sack_weight_kg, sku_type, lot_id')
+    .eq('lot_id', lotId).eq('location_id', fromId).gt('weight_kg', 0)
+    .order('received_at', { ascending: true })
+
+  let remaining = kg
+  for (const b of pool ?? []) {
+    if (remaining <= 0.0001) break
+    const onHand = parseFloat(b.weight_kg)
+    const move = Math.min(remaining, onHand)
+    const pk = b.sack_weight_kg ? parseFloat(b.sack_weight_kg) : 1
+    const moveSacks = Math.round(move / (pk || 1))
+
+    if (move >= onHand - 0.005) {
+      const { error } = await supabase.from('batches').update({ location_id: toId }).eq('id', b.id)
+      if (error) return false
+      // A whole batch changing address moves no quantity, so it needs no ledger
+      // row — but it does need to be attributable, which the dispatch_id gives it.
+      await supabase.from('inventory_transactions').insert([
+        { batch_id: b.id, type: 'transfer_out', weight_change_kg: -move, dispatch_id: dispatchId, notes: note },
+        { batch_id: b.id, type: 'transfer_in', weight_change_kg: move, dispatch_id: dispatchId, notes: note },
+      ])
+    } else {
+      const { count } = await supabase.from('batches')
+        .select('id', { count: 'exact', head: true }).eq('source_batch_id', b.id)
+      const childNumber = `${b.batch_number}-T${String((count ?? 0) + 1).padStart(2, '0')}`
+      const { data: child, error: cErr } = await supabase.from('batches').insert([{
+        batch_number: childNumber,
+        lot_id: b.lot_id,
+        weight_kg: move.toFixed(2),
+        sacks: moveSacks,
+        sku_type: b.sku_type ?? 'commercial',
+        sack_weight_kg: b.sack_weight_kg ? parseFloat(b.sack_weight_kg) : null,
+        location_id: toId,
+        source_batch_id: b.id,
+        notes: note,
+      }]).select()
+      if (cErr || !child?.length) return false
+
+      const { error: uErr } = await supabase.from('batches').update({
+        weight_kg: (onHand - move).toFixed(2),
+        sacks: Math.round((onHand - move) / (pk || 1)),
+      }).eq('id', b.id)
+      if (uErr) return false
+
+      await supabase.from('inventory_transactions').insert([
+        { batch_id: b.id, type: 'transfer_out', weight_change_kg: -move, dispatch_id: dispatchId,
+          notes: `${note} → ${childNumber}` },
+        { batch_id: child[0].id, type: 'transfer_in', weight_change_kg: move, dispatch_id: dispatchId,
+          notes: `${note} ← ${b.batch_number}` },
+      ])
+    }
+    remaining -= move
+  }
+  return remaining <= 0.0001
+}
+
+
 function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => void }) {
   const queryClient = useQueryClient()
   const [drNumber, setDrNumber] = useState('')
@@ -60,18 +130,49 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
   const [receiverName, setReceiverName] = useState('')
   const [notes, setNotes] = useState('')
   const [quantities, setQuantities] = useState<Record<string, string>>({})
+  // Where the sacks were PHYSICALLY picked. The order line names where the order
+  // is SOURCED from, which is a different fact: when Bagtikan is short an order is
+  // tagged Paco and the coffee is transferred over. Nothing recorded the second
+  // fact, so dispatch debited the sourcing warehouse whatever actually happened.
+  const [pickedAll, setPickedAll] = useState<string>('')          // header, sets every line
+  const [pickedBy, setPickedBy] = useState<Record<string, string>>({})  // per-line override
+  const [showPerLine, setShowPerLine] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const { data: locations = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ['locations'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('locations').select('id, name').order('name')
+      if (error) throw error
+      return data as { id: string; name: string }[]
+    },
+  })
 
   const itemsToDispatch = order.order_items.filter(i => remainingKg(i) > 0)
 
   useEffect(() => {
     const initial: Record<string, string> = {}
+    const picked: Record<string, string> = {}
     for (const item of itemsToDispatch) {
       initial[item.id] = String(Math.round(remainingKg(item)))
+      picked[item.id] = item.location_id ?? ''
     }
     setQuantities(initial)
+    setPickedBy(picked)
+    // One warehouse in the header when every line agrees, which is the normal case.
+    const distinct = [...new Set(Object.values(picked).filter(Boolean))]
+    setPickedAll(distinct.length === 1 ? distinct[0] : '')
+    setShowPerLine(distinct.length > 1)
   }, [order.id])
+
+  const pickedFor = (item: { id: string; location_id: string | null }) =>
+    pickedBy[item.id] || item.location_id || ''
+  const setPickedForAll = (locId: string) => {
+    setPickedAll(locId)
+    setPickedBy(prev => Object.fromEntries(Object.keys(prev).map(k => [k, locId])))
+  }
+  const locName = (id: string) => locations.find(l => l.id === id)?.name ?? 'that warehouse'
 
   const handleSubmit = async () => {
     setError('')
@@ -89,15 +190,23 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
       }
     }
 
-    // Pre-flight: the tagged location must hold enough stock (deduction is location-scoped)
+    for (const { item } of lines) {
+      if (!pickedFor(item)) {
+        setError(`${item.lots?.name ?? 'Item'}: say which warehouse it was picked from.`)
+        return
+      }
+    }
+
+    // Pre-flight against the warehouse it was PICKED from. A line sourced from Paco
+    // and picked at Bagtikan has to be checked against Bagtikan, because that is
+    // where the stock is about to be taken from.
     for (const { item, qty } of lines) {
-      let availQ = supabase.from('batches').select('weight_kg').eq('lot_id', item.lot_id).gt('weight_kg', 0)
-      if (item.location_id) availQ = availQ.eq('location_id', item.location_id)
-      const { data: availBatches } = await availQ
+      const pickedId = pickedFor(item)
+      const { data: availBatches } = await supabase.from('batches')
+        .select('weight_kg').eq('lot_id', item.lot_id).gt('weight_kg', 0).eq('location_id', pickedId)
       const availKg = (availBatches ?? []).reduce((s, b) => s + parseFloat(b.weight_kg), 0)
       if (qty > availKg + 0.01) {
-        const where = item.locations?.name ?? 'the tagged location'
-        setError(`${item.lots?.name ?? 'Item'}: only ${Math.round(availKg)} kg at ${where}, need ${Math.round(qty)} kg.`)
+        setError(`${item.lots?.name ?? 'Item'}: only ${Math.round(availKg)} kg at ${locName(pickedId)}, need ${Math.round(qty)} kg. Transfer it there first, or change where it was picked from.`)
         return
       }
     }
@@ -117,20 +226,33 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
     const dispatchId = dispatchData[0].id
 
     for (const { item, qty } of lines) {
+      const pickedId = pickedFor(item)
+      const sourcedId = item.location_id ?? pickedId
+
       const { error: diErr } = await supabase.from('dispatch_items').insert([{
         dispatch_id: dispatchId,
         order_item_id: item.id,
         weight_dispatched_kg: qty,
+        picked_location_id: pickedId,
       }])
       if (diErr) { setError(diErr.message); setSubmitting(false); return }
 
-      // Deduct from the tagged location only: tagged batch first, then FIFO within that location
+      // Sourced somewhere, picked somewhere else: the coffee moved, so write the
+      // move. Recording the transfer has been a separate chore and it was skipped
+      // 11 times out of 13 — here it is a consequence of an answer the loader
+      // already gave, and it carries the DR that caused it.
+      if (pickedId !== sourcedId) {
+        const ok = await transferBetween(item.lot_id, sourcedId, pickedId, qty, dispatchId,
+          `Transfer for DR ${drNumber.trim()} · ${order.os_number} — sourced ${locName(sourcedId)}, picked ${locName(pickedId)}`)
+        if (!ok) { setError(`Could not move ${Math.round(qty)} kg from ${locName(sourcedId)} to ${locName(pickedId)}.`); setSubmitting(false); return }
+      }
+
+      // Then debit the warehouse it was actually picked from.
       let remaining = qty
-      let batchQ = supabase
-        .from('batches').select('id, weight_kg')
-        .eq('lot_id', item.lot_id).gt('weight_kg', 0)
-      if (item.location_id) batchQ = batchQ.eq('location_id', item.location_id)
-      const { data: locBatches } = await batchQ.order('received_at', { ascending: true })
+      const { data: locBatches } = await supabase
+        .from('batches').select('id, weight_kg, sack_weight_kg')
+        .eq('lot_id', item.lot_id).gt('weight_kg', 0).eq('location_id', pickedId)
+        .order('received_at', { ascending: true })
 
       const batches = (locBatches ?? []).sort(
         (a, b) => Number(b.id === item.batch_id) - Number(a.id === item.batch_id)
@@ -140,11 +262,18 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
         if (remaining <= 0) break
         const batchKg = parseFloat(batch.weight_kg)
         const deduct = Math.min(remaining, batchKg)
-        await supabase.from('batches').update({ weight_kg: batchKg - deduct }).eq('id', batch.id)
+        // Move sacks with the weight. Leaving it stale is what let a batch that had
+        // shipped still look like it was holding sacks, and a later count refilled it.
+        const pk = batch.sack_weight_kg ? parseFloat(batch.sack_weight_kg) : 1
+        await supabase.from('batches').update({
+          weight_kg: batchKg - deduct,
+          sacks: Math.round((batchKg - deduct) / (pk || 1)),
+        }).eq('id', batch.id)
         await supabase.from('inventory_transactions').insert([{
           batch_id: batch.id,
           type: 'dispatch',
           weight_change_kg: (-deduct).toFixed(2),
+          dispatch_id: dispatchId,
           notes: `DR ${drNumber.trim()} · ${order.os_number}`,
         }])
         remaining -= deduct
@@ -186,22 +315,66 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
         </div>
       </div>
 
+      <div className="flex flex-wrap items-end gap-3 rounded-md border border-blue-200 bg-white px-3 py-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Picked from *</Label>
+          <select
+            value={showPerLine ? '' : pickedAll}
+            onChange={e => { setShowPerLine(false); setPickedForAll(e.target.value) }}
+            className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm"
+          >
+            {showPerLine && <option value="">Per line…</option>}
+            {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </div>
+        <p className="text-xs text-gray-500 flex-1 min-w-[16rem] pb-1.5">
+          Where the sacks actually came off. Defaults to where the order was sourced.
+          {' '}Change it and the transfer is recorded for you.
+        </p>
+        {locations.length > 1 && (
+          <button type="button" onClick={() => setShowPerLine(v => !v)}
+                  className="text-xs text-blue-600 hover:underline pb-1.5">
+            {showPerLine ? 'Same for all lines' : 'Different per line'}
+          </button>
+        )}
+      </div>
+
       <div className="space-y-2">
-        {itemsToDispatch.map(item => (
-          <div key={item.id} className="flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">{item.lots?.name ?? '—'}</p>
-              <p className="text-xs text-gray-400">{Math.round(remainingKg(item))} kg remaining</p>
+        {itemsToDispatch.map(item => {
+          const picked = pickedFor(item)
+          const sourced = item.location_id ?? picked
+          const moved = picked && picked !== sourced
+          return (
+            <div key={item.id} className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{item.lots?.name ?? '—'}</p>
+                <p className="text-xs text-gray-400">
+                  {Math.round(remainingKg(item))} kg remaining
+                  <span className="text-gray-300"> · sourced {item.locations?.name ?? '—'}</span>
+                  {moved && (
+                    <span className="text-amber-600 font-medium"> · will transfer to {locName(picked)}</span>
+                  )}
+                </p>
+              </div>
+              {showPerLine && (
+                <select
+                  value={picked}
+                  onChange={e => setPickedBy(prev => ({ ...prev, [item.id]: e.target.value }))}
+                  className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs"
+                >
+                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              )}
+              <Input
+                type="number" min="0" max={remainingKg(item)}
+                value={quantities[item.id] ?? ''}
+                onChange={e => setQuantities(prev => ({ ...prev, [item.id]: e.target.value }))}
+                className="w-24 text-right h-8 text-sm"
+              />
+              <span className="text-xs text-gray-400 w-4 shrink-0">kg</span>
             </div>
-            <Input
-              type="number" min="0" max={remainingKg(item)}
-              value={quantities[item.id] ?? ''}
-              onChange={e => setQuantities(prev => ({ ...prev, [item.id]: e.target.value }))}
-              className="w-24 text-right h-8 text-sm"
-            />
-            <span className="text-xs text-gray-400 w-4 shrink-0">kg</span>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       <div className="space-y-1">
