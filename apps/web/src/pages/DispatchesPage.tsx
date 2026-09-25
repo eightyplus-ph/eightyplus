@@ -228,6 +228,11 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
     for (const { item, qty } of lines) {
       const pickedId = pickedFor(item)
       const sourcedId = item.location_id ?? pickedId
+      // The packaging the order was written against, taken from its chosen batch.
+      const { data: obRows } = item.batch_id
+        ? await supabase.from('batches').select('sku_type').eq('id', item.batch_id).limit(1)
+        : { data: null }
+      const orderSku = obRows?.[0]?.sku_type ?? null
 
       const { error: diErr } = await supabase.from('dispatch_items').insert([{
         dispatch_id: dispatchId,
@@ -250,12 +255,21 @@ function DispatchForm({ order, onDone }: { order: PendingOrder; onDone: () => vo
       // Then debit the warehouse it was actually picked from.
       let remaining = qty
       const { data: locBatches } = await supabase
-        .from('batches').select('id, weight_kg, sack_weight_kg')
+        .from('batches').select('id, weight_kg, sack_weight_kg, sku_type')
         .eq('lot_id', item.lot_id).gt('weight_kg', 0).eq('location_id', pickedId)
         .order('received_at', { ascending: true })
 
-      const batches = (locBatches ?? []).sort(
-        (a, b) => Number(b.id === item.batch_id) - Number(a.id === item.batch_id)
+      // Draw from stock of the same packaging first, and only break a sack when
+      // there is no loose stock left. Plain FIFO ignores packaging: DR 1887 took
+      // 6 kg of Amore's 10 from a retail batch, then opened a 30 kg sack for the
+      // remaining 4 while 14 kg of 1 kg bags sat beside it, because the sack was
+      // received earlier. That turns a whole sack into a part sack for nothing and
+      // puts a remainder on the count sheet that nobody can explain.
+      const sameSku = (b: { sku_type?: string | null }) =>
+        (b.sku_type ?? 'commercial') === (orderSku ?? 'commercial')
+      const batches = (locBatches ?? []).sort((a, b) =>
+        Number(b.id === item.batch_id) - Number(a.id === item.batch_id) ||
+        Number(sameSku(b)) - Number(sameSku(a))
       )
 
       for (const batch of batches) {

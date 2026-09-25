@@ -28,16 +28,24 @@ COMMENT ON COLUMN dispatch_items.picked_location_id IS
 -- Backfill from the ledger: where a dispatch debited a batch, that batch's
 -- warehouse IS where it was picked, whatever the order line said. This makes the
 -- column true for history without asserting anything new.
+-- Written as a correlated subquery, not UPDATE..FROM..JOIN: in Postgres the row
+-- being updated cannot be referenced from a JOIN's ON clause in the FROM list.
+-- Ordering by the largest movement makes the result deterministic where a single
+-- dispatch drew the same lot from more than one batch.
 UPDATE dispatch_items di
-SET picked_location_id = b.location_id
-FROM inventory_transactions t
-JOIN batches b ON b.id = t.batch_id
-JOIN dispatches d ON d.id = di.dispatch_id
-JOIN order_items oi ON oi.id = di.order_item_id
-WHERE di.picked_location_id IS NULL
-  AND t.type = 'dispatch'
-  AND b.lot_id = oi.lot_id
-  AND t.notes LIKE 'DR ' || d.dr_number || ' %';
+SET picked_location_id = (
+  SELECT b.location_id
+  FROM inventory_transactions t
+  JOIN batches b ON b.id = t.batch_id
+  JOIN dispatches d ON d.id = di.dispatch_id
+  JOIN order_items oi ON oi.id = di.order_item_id
+  WHERE t.type = 'dispatch'
+    AND b.lot_id = oi.lot_id
+    AND t.notes LIKE 'DR ' || d.dr_number || ' %'
+  ORDER BY abs(t.weight_change_kg) DESC
+  LIMIT 1
+)
+WHERE di.picked_location_id IS NULL;
 
 -- Link a transfer to the dispatch that caused it. Until now a transfer carried
 -- only its counterpart batch ("Transferred to PC260701-031-T03") and could not be
