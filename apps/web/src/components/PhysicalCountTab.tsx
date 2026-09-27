@@ -633,46 +633,73 @@ function CountForm({ existingCount, onCancel }: { existingCount?: PhysicalCount;
                   const systemKg = (c.byWh[wh] ?? []).reduce((t, b) => t + parseFloat(b.weight_kg), 0)
                   return { wh, rep, row, sacks, countedKg: sacks * c.pack, systemKg }
                 })
-                const anyEntered = perWh.some(w => w.row?.included && w.row.sacks !== '')
-                const countedKg = perWh.reduce((t, w) => t + (w.row?.included ? w.countedKg : 0), 0)
+                const enteredWh = perWh.filter(w => w.row?.included && w.row.sacks !== '')
+                const anyEntered = enteredWh.length > 0
+                const countedKg = enteredWh.reduce((t, w) => t + w.countedKg, 0)
                 const systemKg  = perWh.reduce((t, w) => t + w.systemKg, 0)
                 const cellBs    = WAREHOUSES.flatMap(wh => c.byWh[wh] ?? [])
                 const expectedKg = expectation ? expectedFor(cellBs) : systemKg
+                // Expected is compared only against the warehouses that were actually
+                // counted. Summing both while one is blank reports the uncounted site
+                // as a shortfall — Lam Dong read −300 kg on 26 Sept purely because
+                // Bagtikan's 5 sacks had not been typed yet.
+                const expectedEntered = enteredWh.reduce(
+                  (t, w) => t + (expectation ? expectedFor(c.byWh[w.wh] ?? []) : w.systemKg), 0)
                 const moves     = movementsFor(cellBs)
                 // book vs expected diverging means stock moved without a ledger row
                 const bookDrift = Math.abs(systemKg - expectedKg) >= 0.01
-                const variance  = countedKg - expectedKg
+                const variance  = countedKg - expectedEntered
+                const partial   = anyEntered && enteredWh.length < perWh.filter(w => w.rep).length
                 const hasVariance = anyEntered && Math.abs(variance) >= 0.01
                 return (
                   <tr key={`${c.product}-${c.pack}`}
                       className={`border-b border-gray-100 ${hasVariance ? 'bg-amber-50/50' : ''}`}>
                     <td className="px-3 py-2 text-gray-900">{c.product}</td>
                     <td className="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{c.pack}kg</td>
-                    {perWh.map(w => (
-                      <td key={w.wh} className="px-3 py-2 text-right">
-                        {w.rep ? (
-                          <input
-                            type="number" min="0" step="1"
-                            value={w.row?.sacks ?? ''}
-                            onChange={e => {
-                              setOverride(w.rep!.id, 'sacks', e.target.value)
-                              setOverride(w.rep!.id, 'sackWeightKg', String(c.pack))
-                              setOverride(w.rep!.id, 'included', true)
-                            }}
-                            placeholder="—"
-                            title={`${w.rep.batch_number} · system ${w.systemKg.toFixed(0)} kg`}
-                            className={inputCls}
-                          />
-                        ) : (
-                          <span className="text-gray-200 text-xs">—</span>
-                        )}
-                      </td>
-                    ))}
+                    {perWh.map(w => {
+                      // Expected for THIS warehouse, in the unit being typed. Without it
+                      // the only expected figure on the row is the two sites added
+                      // together, which is unusable while standing in one of them.
+                      const whExpected = expectation ? expectedFor(c.byWh[w.wh] ?? []) : w.systemKg
+                      return (
+                        <td key={w.wh} className="px-3 py-2 text-right">
+                          {w.rep ? (
+                            <>
+                              <input
+                                type="number" min="0" step="1"
+                                value={w.row?.sacks ?? ''}
+                                onChange={e => {
+                                  setOverride(w.rep!.id, 'sacks', e.target.value)
+                                  setOverride(w.rep!.id, 'sackWeightKg', String(c.pack))
+                                  setOverride(w.rep!.id, 'included', true)
+                                }}
+                                placeholder={c.pack === 1 ? 'bags' : 'sacks'}
+                                title={`${w.rep.batch_number} · expected ${whExpected.toFixed(0)} kg`}
+                                className={inputCls}
+                              />
+                              <span className="block text-[10px] text-gray-400 mt-0.5 tabular-nums">
+                                exp {expectedInSacks(whExpected, c.pack)}
+                              </span>
+                            </>
+                          ) : (
+                            // A blank is not the same as "nothing here", and a bare dash
+                            // reads as both. Say which it is.
+                            <span className="text-gray-300 text-[10px] italic">no stock</span>
+                          )}
+                        </td>
+                      )
+                    })}
                     <td className="px-3 py-2 text-right font-medium text-gray-900 tabular-nums">
                       {anyEntered ? `${countedKg.toFixed(2)} kg` : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2 text-right text-gray-500 tabular-nums text-xs">
                       {expectedKg.toFixed(0)} kg
+                      {partial && (
+                        <span className="block text-[10px] text-blue-500"
+                              title="Only the warehouses you entered are being compared.">
+                          vs {expectedEntered.toFixed(0)} counted
+                        </span>
+                      )}
                       {bookDrift && (
                         <span className="block text-[10px] text-red-500"
                               title={`The book says ${systemKg.toFixed(0)} kg. Stock moved without a recorded movement.`}>
