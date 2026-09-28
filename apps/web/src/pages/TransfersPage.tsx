@@ -192,6 +192,9 @@ export default function TransfersPage() {
       return
     }
 
+    const fromName = locations.find(l => l.id === fromId)?.name ?? 'origin'
+    const toName   = locations.find(l => l.id === toId)?.name ?? 'destination'
+
     setLoading(true)
     const { error: tErr } = await supabase.from('transfers').insert([{
       batch_id:         resolvedBatch.id,
@@ -214,6 +217,20 @@ export default function TransfersPage() {
       const { error } = await supabase.from('batches')
         .update({ location_id: toId }).eq('id', resolvedBatch.id)
       if (error) { setError(error.message); setLoading(false); return }
+
+      // A whole batch changes address rather than splitting, so for a long time
+      // this branch wrote no movement at all — 91 of 99 transfers never reached the
+      // ledger, 84,527 kg of it Bagtikan⇄Paco, including 20,520 kg of Lam Dong and
+      // 18,900 kg of Robusta on 18 September. The position moved between warehouses
+      // with no trace, so a count of either site disagreed with the book and nothing
+      // could explain why. The pair is written on the same batch: net zero for the
+      // batch, and the per-warehouse history now exists.
+      await supabase.from('inventory_transactions').insert([
+        { batch_id: resolvedBatch.id, type: 'transfer_out', weight_change_kg: -moveKg,
+          notes: `Whole batch moved ${fromName} → ${toName}${notes.trim() ? ' · ' + notes.trim() : ''}` },
+        { batch_id: resolvedBatch.id, type: 'transfer_in', weight_change_kg: moveKg,
+          notes: `Whole batch moved ${fromName} → ${toName}${notes.trim() ? ' · ' + notes.trim() : ''}` },
+      ])
     } else {
       const { count } = await supabase.from('batches')
         .select('id', { count: 'exact', head: true })
