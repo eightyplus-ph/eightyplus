@@ -96,6 +96,7 @@ export default function LoginPage() {
           role: selected!.role,
           can_create_dispatches: selected!.can_create_dispatches,
           can_manage_contracts: selected!.can_manage_contracts,
+          allowed_modules: selected!.allowed_modules ?? null,
         })
       }
       localStorage.setItem(`ep_setup_${selected!.id}`, '1')

@@ -2,22 +2,16 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useProfile } from '@/lib/profile'
+import { NAV } from '@/lib/nav'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 
-const MODULES = [
-  { key: 'dashboard',  label: 'Dashboard' },
-  { key: 'inventory',  label: 'Inventory' },
-  { key: 'receiving',  label: 'Receiving' },
-  { key: 'transfers',  label: 'Transfers' },
-  { key: 'repack',     label: 'Repack' },
-  { key: 'lots',       label: 'Product Names' },
-  { key: 'locations',  label: 'Locations' },
-  { key: 'clients',    label: 'Clients' },
-  { key: 'orders',     label: 'Orders' },
-  { key: 'dispatches', label: 'Dispatches' },
-  { key: 'contracts',  label: 'Contracts' },
-]
+// Derived from the shared nav so a new page can never be added to the app
+// without appearing here. 'users' is excluded deliberately — admin-only, and
+// not something an allowed_modules list should be able to grant.
+const MODULES = NAV
+  .filter(n => n.moduleKey !== 'users')
+  .map(n => ({ key: n.moduleKey, label: n.label }))
 
 const ROLES = ['admin', 'manager', 'sales', 'ops']
 

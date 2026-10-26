@@ -7,6 +7,10 @@ export interface TeamMember {
   role: 'admin' | 'manager' | 'sales' | 'ops'
   can_create_dispatches: boolean
   can_manage_contracts: boolean
+  // Module whitelist stamped onto the profile at first PIN setup. Omit (or
+  // null) to fall back to the role defaults in lib/nav.ts; an explicit list
+  // overrides them, so a member can be narrower than their role implies.
+  allowed_modules?: string[] | null
 }
 
 export const TEAM: TeamMember[] = [
@@ -69,5 +73,18 @@ export const TEAM: TeamMember[] = [
     role: 'manager',
     can_create_dispatches: false,
     can_manage_contracts: false,
+  },
+  {
+    id: 'chun',
+    name: 'Chun',
+    initials: 'CH',
+    color: '#14B8A6',
+    email: 'chun@eightyplus.internal',
+    role: 'manager',
+    can_create_dispatches: false,
+    can_manage_contracts: false,
+    // Manager role for the company-wide Dashboard figures, but narrowed to the
+    // Dashboard alone — no inventory, orders, clients or contracts.
+    allowed_modules: ['dashboard'],
   },
 ]

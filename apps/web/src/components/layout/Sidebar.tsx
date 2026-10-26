@@ -1,31 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useProfile, type Profile } from '@/lib/profile'
+import { useProfile } from '@/lib/profile'
+import { NAV, canAccessModule } from '@/lib/nav'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-
-interface NavLink {
-  label: string
-  href: string
-  moduleKey: string
-  defaultRoles?: string[]
-  checkFn?: (p: Profile | null) => boolean
-}
-
-const ALL_NAV: NavLink[] = [
-  { label: 'Dashboard',     href: '/',           moduleKey: 'dashboard' },
-  { label: 'Inventory',     href: '/inventory',  moduleKey: 'inventory' },
-  { label: 'Receiving',     href: '/receiving',  moduleKey: 'receiving',  defaultRoles: ['admin', 'ops'] },
-  { label: 'Transfers',     href: '/transfers',  moduleKey: 'transfers',  defaultRoles: ['admin', 'ops'] },
-  { label: 'Repack',        href: '/repack',     moduleKey: 'repack',     defaultRoles: ['admin', 'ops'] },
-  { label: 'Product Names', href: '/lots',       moduleKey: 'lots' },
-  { label: 'Locations',     href: '/locations',  moduleKey: 'locations',  defaultRoles: ['admin', 'ops', 'manager'] },
-  { label: 'Clients',       href: '/clients',    moduleKey: 'clients',    defaultRoles: ['admin', 'manager', 'sales'] },
-  { label: 'Orders',        href: '/orders',     moduleKey: 'orders',     defaultRoles: ['admin', 'manager', 'sales'] },
-  { label: 'Dispatches',    href: '/dispatches', moduleKey: 'dispatches', defaultRoles: ['admin', 'ops', 'sales'] },
-  { label: 'Contracts',     href: '/contracts',  moduleKey: 'contracts',  defaultRoles: ['admin', 'manager', 'sales'] },
-  { label: 'Users',         href: '/users',      moduleKey: 'users',      defaultRoles: ['admin'] },
-]
 
 export default function Sidebar() {
   const [userEmail, setUserEmail] = useState<string | null>(null)
@@ -43,13 +21,7 @@ export default function Sidebar() {
     window.location.href = '/'
   }
 
-  const visibleLinks = ALL_NAV.filter(link => {
-    if (!profile) return true
-    if (profile.role === 'admin') return true
-    if (profile.allowed_modules) return profile.allowed_modules.includes(link.moduleKey)
-    if (!link.defaultRoles) return true
-    return link.defaultRoles.includes(profile.role)
-  })
+  const visibleLinks = NAV.filter(link => canAccessModule(profile, link.moduleKey))
 
   return (
     <aside className="fixed left-0 top-0 w-64 h-screen bg-white border-r border-gray-200 flex flex-col p-4 z-10">
