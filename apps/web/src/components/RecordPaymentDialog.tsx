@@ -22,13 +22,25 @@ interface UnpaidOrder {
   order_date: string
   status: string
   payment_date: string | null
+  discount_percent: string | null
   order_items: { weight_ordered_kg: string; price_per_kg: string }[]
 }
 
 const peso = (n: number) => '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const num = (v: string) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
-const orderValue = (o: UnpaidOrder) =>
+const orderGross = (o: UnpaidOrder) =>
   o.order_items.reduce((s, i) => s + parseFloat(i.weight_ordered_kg ?? '0') * parseFloat(i.price_per_kg ?? '0'), 0)
+/**
+ * What the client actually pays: gross less the order's discount, less the
+ * client's creditable withholding tax on what remains. Same order of operations
+ * as the Net Amount Due on the order detail and the Statement of Account
+ * (OrdersPage) — the withheld part arrives as a BIR 2307, never as cash, so
+ * allocating the gross would leave every WHT client's order looking short.
+ */
+const orderNet = (o: UnpaidOrder, whtRate: number) => {
+  const afterDisc = orderGross(o) * (1 - num(o.discount_percent ?? '0') / 100)
+  return afterDisc - afterDisc * (whtRate / 100)
+}
 
 export default function RecordPaymentDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient()
@@ -45,11 +57,11 @@ export default function RecordPaymentDialog({ onClose }: { onClose: () => void }
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { data: clients = [] } = useQuery<{ id: string; company_name: string }[]>({
+  const { data: clients = [] } = useQuery<{ id: string; company_name: string; withholding_tax_rate: string | null }[]>({
     queryKey: ['clients-for-payment'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('clients').select('id, company_name').eq('status', 'active').order('company_name')
+        .from('clients').select('id, company_name, withholding_tax_rate').eq('status', 'active').order('company_name')
       if (error) throw error
       return data ?? []
     },
@@ -64,7 +76,7 @@ export default function RecordPaymentDialog({ onClose }: { onClose: () => void }
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select('id, os_number, order_date, status, payment_date, order_items(weight_ordered_kg, price_per_kg)')
+        .select('id, os_number, order_date, status, payment_date, discount_percent, order_items(weight_ordered_kg, price_per_kg)')
         .eq('client_id', clientId)
         .is('archived_at', null)
         .order('order_date')
@@ -72,6 +84,9 @@ export default function RecordPaymentDialog({ onClose }: { onClose: () => void }
       return (data ?? []) as unknown as UnpaidOrder[]
     },
   })
+
+  const whtRate = num(clients.find(c => c.id === clientId)?.withholding_tax_rate ?? '0')
+  const orderValue = (o: UnpaidOrder) => orderNet(o, whtRate)
 
   const received = num(amount)
   const allocated = useMemo(
@@ -238,7 +253,9 @@ export default function RecordPaymentDialog({ onClose }: { onClose: () => void }
                         <th className="text-left px-3 py-2 font-medium text-gray-500">OS#</th>
                         <th className="text-left px-3 py-2 font-medium text-gray-500">Date</th>
                         <th className="text-left px-3 py-2 font-medium text-gray-500">Status</th>
-                        <th className="text-right px-3 py-2 font-medium text-gray-500">Order value</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-500">
+                          {whtRate > 0 ? `Net due (less ${whtRate}% WHT)` : 'Amount due'}
+                        </th>
                         <th className="text-right px-3 py-2 font-medium text-gray-500 w-36">Allocate</th>
                       </tr>
                     </thead>
@@ -257,7 +274,12 @@ export default function RecordPaymentDialog({ onClose }: { onClose: () => void }
                               {o.status}
                               {o.payment_date && <span className="text-gray-400"> · paid {o.payment_date}</span>}
                             </td>
-                            <td className="px-3 py-2 text-right text-gray-700 tabular-nums">{peso(orderValue(o))}</td>
+                            <td className="px-3 py-2 text-right text-gray-700 tabular-nums">
+                              {peso(orderValue(o))}
+                              {Math.abs(orderGross(o) - orderValue(o)) > 0.005 && (
+                                <span className="block text-xs text-gray-400">gross {peso(orderGross(o))}</span>
+                              )}
+                            </td>
                             <td className="px-3 py-2">
                               <input type="number" min="0" step="0.01" disabled={!on}
                                 value={alloc[o.id] ?? ''}
